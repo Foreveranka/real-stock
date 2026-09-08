@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Real Stock</title>
+<meta name="description" content="Is that stock token real? Verify the issuer, compare reference and DEX prices, and check if your wallet can receive tokenized stocks on Base and Robinhood Chain.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+<nav id="nav"></nav>
+
+<section class="hero">
+  <h1>Is that stock token real?</h1>
+  <p id="lead"></p>
+  <form class="search" id="form">
+    <input id="q" placeholder="0x... address or ticker (AAPL, NVDA, TSLA)" autocomplete="off">
+    <button class="btn" type="submit">Check</button>
+  </form>
+  <div class="quick" id="quick"></div>
+  <div class="banner" id="banner"></div>
+</section>
+
+<div class="feats" id="feats"></div>
+
+<div class="grid">
+  <div class="kpi"><b id="k_count">...</b><span id="k_count_l">Issued stocks</span></div>
+  <div class="kpi"><b id="k_liq">...</b><span>DEX liquidity, best pool per stock</span></div>
+  <div class="kpi"><b id="k_vol">...</b><span>24h DEX volume</span></div>
+  <div class="kpi"><b id="k_feed">...</b><span>Reference feeds fresh (last 3h)</span></div>
+</div>
+<p><a class="btn sec" id="allbtn" href="stocks.html" data-net>See all stocks with live prices</a></p>
+
+<footer id="foot"></footer>
+</div>
+<script src="app.js"></script>
+<script>
+mountNav("index.html"); mountFooter();
+document.getElementById("lead").textContent=NET.key==="base"
+ ?"Coinbase issues tokenized stocks on Base, but the factory that mints them is open to anyone. Paste any token address or ticker and Real Stock checks the issuer onchain, compares the Chainlink oracle with the DEX price, tells you if your wallet may receive it, and flags look alikes."
+ :"Robinhood issues stock tokens on Robinhood Chain and look alikes with the same ticker appear daily. Paste any token address or ticker and Real Stock checks the contract fingerprint against Robinhood's registry, compares the price with the same stock's Chainlink feed on Base, tells you if your wallet may receive it, and flags look alikes.";
+document.getElementById("feats").innerHTML=NET.key==="base"
+ ?'<div class="feat"><div class="n">1</div><b>Verify the issuer by address</b><span>A stock name or a 0xb2 prefix proves nothing. Only an address on Coinbase\'s published list does. We also read the onchain metadata fingerprint.</span></div><div class="feat"><div class="n">2</div><b>Oracle vs DEX, with freshness</b><span>Chainlink total return feeds freeze when US markets close. See the premium and how old the number is before you act on it.</span></div><div class="feat"><div class="n">3</div><b>Can your wallet receive it?</b><span>Coinbase gates transfers with an onchain policy registry. We simulate a transfer to your address so you know before you buy.</span></div>'
+ :'<div class="feat"><div class="n">1</div><b>Verify by contract fingerprint</b><span>Every official Robinhood Stock Token is a proxy to the same beacon contract and sits in Robinhood\'s asset registry. Fakes with the same name fail both.</span></div><div class="feat"><div class="n">2</div><b>Two issuers, one stock</b><span>Robinhood Chain has no price oracle, so we use the Chainlink feed of the same stock on Base as the reference and show the premium between the two issuers.</span></div><div class="feat"><div class="n">3</div><b>Pause, blocklist, corporate actions</b><span>Robinhood tokens can be paused, addresses blocked, and multipliers changed for splits and dividends. All of it is read onchain.</span></div>';
+document.getElementById("form").onsubmit=(e)=>{ e.preventDefault(); const v=document.getElementById("q").value.trim(); if(v) location.href=withNet("check.html?q="+encodeURIComponent(v)); };
+(async()=>{
+  const toks=await loadRegistry();
+  document.getElementById("quick").innerHTML=toks.slice(0,16).map(t=>'<a href="'+withNet("check.html?q="+t.address)+'">'+esc(t.symbol)+'</a>').join("")+(toks.length>16?'<a href="'+withNet("stocks.html")+'">all '+toks.length+'</a>':"");
+  document.getElementById("k_count").textContent=toks.length; document.getElementById("k_count_l").textContent=NET.issuer+" issued stocks on "+NET.label;
+  document.getElementById("allbtn").textContent="See all "+toks.length+" stocks with live prices";
+  let liq=0,vol=0,fresh=0,feeds=0;
+  await loadAll(r=>{ liq+=r.dx.liq||0; vol+=r.dx.vol24||0; if(r.orc){feeds++; if(Date.now()/1000-r.orc.updatedAt<3*3600) fresh++;} document.getElementById("k_liq").textContent=usdBig(liq); document.getElementById("k_vol").textContent=usdBig(vol); document.getElementById("k_feed").textContent=fresh+" / "+feeds; });
+})().catch(()=>{});
+</script>
+</body>
+</html>
