@@ -40,29 +40,47 @@ async function run(input){
   const target=!reg&&core.symbol?(NET.tokens||[]).find(t=>(t.root||t.symbol).toUpperCase()===symRoot.toUpperCase()):null;
   const root=reg?(reg.root||reg.symbol).replace(/c$/,""):(target?(target.root||target.symbol).replace(/c$/,""):symRoot);
   const extra=reg?(reg.name||"").split(/\s+/)[0]:(target?target.name:(core.name||"").split(/\s+/)[0]);
-  const [likes,pol]=await Promise.all([root?lookalikes(root,addr,extra):Promise.resolve([]), state.wallet?policyProbe(addr,holderFor(dx),state.wallet):Promise.resolve(null)]);
+  const [likes,pol,pr]=await Promise.all([root?lookalikes(root,addr,extra):Promise.resolve([]), state.wallet?policyProbe(addr,holderFor(dx),state.wallet):Promise.resolve(null), state.wallet?policyRead(addr,state.wallet,holderFor(dx)):Promise.resolve(null)]);
   const share='<button class="btn sec sm" onclick="navigator.clipboard&&navigator.clipboard.writeText(location.href);this.textContent=\'Link copied\'">Share this check</button>';
   const verdict=reg?'<div class="verdict ok"><span>Issued by '+NET.issuer+': '+esc(reg.symbol)+' ('+esc(reg.name)+')</span>'+share+'</div>':(target?'<div class="verdict bad"><span>Not issued by '+NET.issuer+'. Looks like '+esc(target.symbol)+'</span>'+share+'</div>':'<div class="verdict bad"><span>Not on the '+NET.issuer+' issued list</span>'+share+'</div>');
-  const metaCB=core.meta&&/metadata\.coinbase\.com/.test(JSON.stringify(core.meta));
+  function metaHost(u){ try{ const x=new URL(u); return (x.protocol==="https:"&&!x.username&&!x.password)?x.hostname.toLowerCase():null; }catch(e){ return null; } }
+  const metaImg=core.meta&&typeof core.meta.image==="string"?core.meta.image:null;
+  const metaHostName=metaImg?metaHost(metaImg):null;
+  const metaCB=metaHostName==="metadata.coinbase.com";
   const fp=NET.verify==="b20"
     ?[chk(core.isB20?"ok":"warn","B20 token (Base native standard)",core.isB20?"Created through B20Factory. The factory is open, so B20 alone does not prove the issuer.":"Not a B20 token. Coinbase stocks are always B20."),
-      chk(metaCB?"ok":(core.uri?"warn":"bad"),"Issuer metadata points to coinbase.com",core.uri?esc(core.uri.length>90?core.uri.slice(0,90)+"...":core.uri):"no contractURI")]
+      chk(metaCB?"ok":(core.uri?"warn":"warn"),"Issuer metadata host",metaHostName?("resolves to "+esc(metaHostName)+(metaCB?", Coinbase\u0027s metadata host. Corroboration only: metadata can be copied, the address list is what decides.":", not Coinbase\u0027s metadata host")):(core.uri?"contractURI present but no https image host to parse":"no contractURI, metadata may be unavailable rather than fake"))]
     :[chk(core.beaconOk?"ok":"bad","Contract fingerprint: Robinhood beacon proxy",core.beacon?"beacon "+core.beacon+(core.beaconOk?" matches every official Robinhood Stock Token":" is not Robinhood's beacon "+NET.beacon):"no beacon slot, not a Robinhood proxy"),
       chk(core.name&&/• Robinhood Token$/.test(core.name)?"ok":"bad","Name carries the official suffix",core.name?esc(core.name):"no name")];
   const mult=core.multiplier; const pend=reg&&reg.pendingMultiplier?Number(reg.pendingMultiplier):null;
   const checks=[
-    chk(reg?"ok":"bad","On the "+NET.issuer+" canonical list (matched by address)",reg?addr+(reg.isin?", ISIN "+esc(reg.isin):""):NET.issuer+" only issues the addresses on "+NET.listName+". Anything else with a stock name is not backed."+(target?' The real one is <a href="'+withNet("check.html?q="+target.address)+'">'+esc(target.symbol)+'</a>.':"")),
+    chk(reg?"ok":"bad","On the "+NET.issuer+" canonical list (matched by address)",reg?addr+(reg.isin?", ISIN "+esc(reg.isin):"")+(reg.chainId?", chain "+reg.chainId:"")+(NET.fetchedAt?", from the issuer list captured "+esc(NET.fetchedAt):""):"Not found in the "+NET.issuer+" list published at "+NET.listName+". That means it is not an issuer token, not that it is proven fraudulent."+(target?' The real one is <a href="'+withNet("check.html?q="+target.address)+'">'+esc(target.symbol)+'</a>.':"")),
     fp[0],fp[1],
     chk(mult==null?"warn":(pend?"warn":"ok"),"Multiplier (corporate actions)",mult==null?"not readable":mult.toFixed(6)+" (token price = share price x multiplier)"+(pend?", pending update to "+pend:"")+(mult!==1?". A non 1 multiplier means a split or dividend was applied.":"")),
-    chk(orc?(Date.now()/1000-orc.updatedAt<3*3600?"ok":"warn"):"mut","Reference price",orc?usd(orc.price)+" from "+orc.source+", updated "+ago(orc.updatedAt)+" ago. Feeds freeze outside US market hours.":"no reference feed for this underlying"),
-    chk(dx.price?(prem!=null&&Math.abs(prem)<0.5?"ok":"warn"):"warn","DEX price vs reference",dx.price?usd(dx.price)+" on "+esc(dx.venue)+" ("+esc(dx.quote)+"), premium "+(prem==null?"n/a":(prem>0?"+":"")+prem.toFixed(2)+"%")+", liquidity "+usdBig(dx.liq)+", 24h "+(dx.chg==null?"n/a":(dx.chg>0?"+":"")+dx.chg+"%"):"no liquidity pool found on "+esc(NET.label)),
-    chk(core.paused?"bad":(pol?(pol.status==="ok"?"ok":pol.status==="blocked"?"bad":"warn"):"mut"),"Can your wallet receive it? (transfer policy)",core.paused?"Token is paused by the issuer, transfers revert.":(pol?pol.detail+(state.wallet?" ("+short(state.wallet)+")":""):"Connect a wallet to simulate a transfer from the top pool to your address. "+(NET.key==="base"?"Coinbase gates transfers with an onchain policy registry, and approve() is not policy checked.":"Robinhood tokens carry pause and blocklist controls."))),
+    chk(!orc?"mut":(orc.error?"warn":(orc.paused?"warn":(Date.now()/1000-orc.updatedAt<3*3600?"ok":"warn"))),"Reference price",!orc?"no Chainlink feed published for this token":(orc.error?esc(orc.error):usd(orc.price)+" as of "+ago(orc.updatedAt)+" ago, from the "+esc(orc.source)+"."+(orc.paused?" The feed is currently paused, which happens during corporate actions.":" Feeds cover 24/5 US equity sessions and stop over the weekend."))),
+    chk(dx.price?(prem!=null&&Math.abs(prem)<0.5?"ok":"warn"):"warn","DEX price vs reference",dx.quoteOnly?"this token only appears as the quote side of "+dx.pairs+" pair(s), so no independent USD price can be read from them":dx.price?usd(dx.price)+" on "+esc(dx.venue)+" ("+esc(dx.quote)+"), premium "+(prem==null?"n/a":(prem>0?"+":"")+prem.toFixed(2)+"%")+", liquidity "+usdBig(dx.liq)+", 24h "+(dx.chg==null?"n/a":(dx.chg>0?"+":"")+dx.chg+"%"):"no liquidity pool found on "+esc(NET.label)),
+    (function(){
+      if(core.paused) return chk("bad","Receive check","The token is paused by the issuer, so transfers revert for everyone right now.");
+      if(!state.wallet) return chk("mut","Receive check","Connect a wallet to read the transfer policy for your address and simulate a receipt. "+(NET.key==="base"?"Coinbase gates transfers through an onchain policy registry; note that approve() is not policy checked.":"Robinhood tokens carry pause and blocklist controls."));
+      let head="", cls="warn", body=[];
+      if(pr){
+        const rx=pr.receiver, sx=pr.sender, ex=pr.executor;
+        const known=[rx,sx,ex].filter(x=>x&&x.ok!==null);
+        if(rx&&rx.ok===false){ cls="bad"; head="Receiver policy denies this address."; }
+        else if(known.length&&known.every(x=>x.ok===true)){ cls="ok"; head="Policy registry authorises this address for receive, send and execute."; }
+        else head="Policy read incomplete.";
+        body.push("Policy ids: receiver "+(rx&&rx.id||"n/a")+", sender "+(sx&&sx.id||"n/a")+", executor "+(ex&&ex.id||"n/a")+".");
+      } else head="Policy registry not exposed on this network, using simulation only.";
+      if(pol){ body.push("Simulation: "+pol.detail+"."); if(pol.status==="blocked") cls="bad"; }
+      body.push("This covers a direct transfer of this token to "+short(state.wallet)+" at the current block. It does not promise that any particular swap route, allowance or execution path will succeed.");
+      return chk(cls,"Receive check",head+" "+body.join(" "));
+    })(),
     chk(likes.length?"warn":"ok","Look alike tokens on "+NET.label,likes.length?likes.length+" other token(s) use this name or ticker, listed below":"none found on DexScreener")
   ].join("");
   const likesHtml=likes.length?'<div class="card"><h3>Look alikes (not issued by '+NET.issuer+')</h3>'+likes.map(l=>'<div class="chk"><div class="ic bad">X</div><div><div class="t">'+esc(l.name)+' <span class="note">('+esc(l.symbol)+')</span></div><div class="d mono">'+l.addr+', liquidity '+usdBig(l.liq)+' <a href="'+withNet("check.html?q="+l.addr)+'">check it</a></div></div></div>').join("")+'</div>':"";
   const tw=(x)=>{ const v=String((x||{}).whole||""); return v.includes("TRADABLE")?"open":v?"closed":"n/a"; };
   const trading=reg&&reg.trading?'<div class="note" style="margin-top:8px">Issuer trading windows: regular '+tw(reg.trading.market)+', extended '+tw(reg.trading.extended)+', overnight '+tw(reg.trading.overnight)+'</div>':"";
-  box.innerHTML='<div class="card"><h2>'+logo(core,reg)+'<span>'+esc(core.name||"Unknown token")+' <span class="note">'+esc(core.symbol||"")+'</span></span></h2>'+verdict+'<div class="checks">'+checks+'</div>'+trading+'<div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">'+(dx.price?tradeLinks(reg||{address:addr},dx):"")+infoLinks(addr)+'</div><div class="mono" style="margin-top:12px">token '+addr+(feedFor(reg||{root:symRoot})?", reference feed "+feedFor(reg||{root:symRoot})+" (Base)":"")+(dx.pairAddress?", pool "+dx.pairAddress:"")+'</div></div>'+likesHtml;
+  box.innerHTML='<div class="card"><h2>'+logo(core,reg)+'<span>'+esc(core.name||"Unknown token")+' <span class="note">'+esc(core.symbol||"")+'</span></span></h2>'+verdict+'<div class="checks">'+checks+'</div>'+trading+'<div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">'+(dx.price?tradeLinks(reg||{address:addr},dx):"")+infoLinks(addr)+'</div><div class="mono" style="margin-top:12px">token '+addr+(reg&&reg.feed?", feed "+reg.feed:"")+(dx.pairAddress?", pool "+dx.pairAddress:"")+'</div></div>'+likesHtml;
 }
 document.addEventListener("wallet",()=>{ if(current) run(current); });
 const q=new URLSearchParams(location.search).get("q");

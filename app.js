@@ -6,7 +6,7 @@ const NETWORKS={
     rpcs:["https://base-rpc.publicnode.com","https://mainnet.base.org","https://base.drpc.org"],
     explorer:"https://basescan.org/token/",explorerName:"Basescan",quote:"0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",quoteSym:"USDC",
     factory:"0xB20f000000000000000000000000000000000000",verify:"b20",
-    listUrl:"https://www.base.org/stocks",listName:"base.org/stocks",
+    listUrl:"https://www.base.org/stocks",listName:"base.org/stocks",feedNote:"Chainlink total return feed on Base",
     tokens:[
 ["AAPLc","Apple","0xb200000000000000000000C2e324d24d7eEcd1fb","0x787f13dEa48Db0897CbCDD985de77809D837F988"],
 ["AMZNc","Amazon","0xb200000000000000000000d9192b6B456483C2E8","0x06A8E4b3aBB3B7543d8396FB2B763d22820cB295"],
@@ -26,24 +26,33 @@ const NETWORKS={
     explorer:"https://robinhoodchain.blockscout.com/token/",explorerName:"Blockscout",quote:"0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168",quoteSym:"USDG",
     beacon:"0xe10b6f6b275de231345c20d14ab812db62151b00",poolManager:"0x8366a39CC670B4001A1121B8F6A443A643e40951",verify:"beacon",
     listUrl:"https://docs.robinhood.com/chain/contracts/",listName:"docs.robinhood.com/chain/contracts",registry:"https://api.robinhood.com/rhj/assets",
+    feedsUrl:"data/robinhood_feeds.json",feedNote:"Chainlink tokenized equity feed on Robinhood Chain",
     tokens:null /* loaded from data/robinhood.json */}
 };
 const NET_KEY=(new URLSearchParams(location.search).get("net")||(function(){try{return localStorage.getItem("rs_net")}catch(e){return null}})()||"base");
 const NET=NETWORKS[NET_KEY]||NETWORKS.base;
 try{ localStorage.setItem("rs_net",NET.key); }catch(e){}
-const SEL={name:"0x06fdde03",symbol:"0x95d89b41",decimals:"0x313ce567",totalSupply:"0x18160ddd",multiplier:"0x1b3ed722",contractURI:"0xe8a3d485",isB20:"0xfa19b927",latestRoundData:"0xfeaf968c",transfer:"0xa9059cbb",balanceOf:"0x70a08231",paused:"0x5c975abb"};
+const SEL={policyId:"0xdb3de624",isAuthorized:"0x55a1179e",oraclePaused:"0x7706ba52",name:"0x06fdde03",symbol:"0x95d89b41",decimals:"0x313ce567",totalSupply:"0x18160ddd",multiplier:"0x1b3ed722",contractURI:"0xe8a3d485",isB20:"0xfa19b927",latestRoundData:"0xfeaf968c",transfer:"0xa9059cbb",balanceOf:"0x70a08231",paused:"0x5c975abb"};
+const POLICY_REGISTRY="0x8453000000000000000000000000000000000002";
+const SCOPE={sender:"b81736c875ab819dd97f59f2a6542cfb731ad52b4ae15a6f24df2fb02b0327f5",receiver:"8a4b3fa2d8b921852bc0089c6ef0958aa6961897be36fd731330fe2cd23f8363",executor:"10be5173aff2a44e748bd9acd8b19fe34689581398a9db7ba2fb671e786ff7d8"};
+const ERRS={"e450d38c":"insufficient balance in the simulated sender","db42144d":"insufficient balance in the simulated sender","c337f8be":"policy forbids this transfer","5b083d28":"policy forbids this transfer","54cfe659":"policy forbids this transfer","d93c0665":"token transfers are paused","e7792495":"token transfers are paused"};
 const BEACON_SLOT="0xa3f0ad74e5423aebfd80d3ef4346578335a9a72aeaee59ff6cb3582b35133d50";
 const QUOTES=new Set(["USDC","USDBC","WETH","ETH","USDT","CBBTC","USDG"]);
 const state={rows:{},wallet:null,byAddr:{}};
 
 async function loadRegistry(){
   if(NET.tokens) { NET.tokens.forEach(t=>state.byAddr[t.address.toLowerCase()]=t); return NET.tokens; }
-  const j=await fetch("data/robinhood.json").then(r=>r.json());
-  NET.tokens=j.tokens.map(t=>({symbol:t.symbol,name:t.name,address:t.address,root:t.symbol,logo:null,multiplier:t.multiplier?Number(t.multiplier):null,pendingMultiplier:t.pendingMultiplier||null,isin:t.isin,trading:t.trading,decimals:t.decimals,uid:t.uid}));
+  const [j,fj]=await Promise.all([fetch("data/robinhood.json").then(r=>r.json()), fetch(NET.feedsUrl).then(r=>r.json()).catch(()=>({}))]);
+  NET.feeds=fj;
+  NET.tokens=j.tokens.map(t=>({symbol:t.symbol,name:t.name,address:t.address,root:t.symbol,logo:null,feed:(fj[t.symbol]||{}).proxy||null,chainId:t.chainId,status:t.status,multiplier:t.multiplier?Number(t.multiplier):null,pendingMultiplier:t.pendingMultiplier||null,isin:t.isin,trading:t.trading,decimals:t.decimals,uid:t.uid}));
   NET.fetchedAt=j.fetchedAt; NET.tokens.forEach(t=>state.byAddr[t.address.toLowerCase()]=t); mountFooter(); return NET.tokens;
 }
-// Cross issuer reference: a Robinhood token uses the Chainlink feed of the same underlying on Base.
-function baseFeedFor(root){ const c=NETWORKS.base.tokens.find(t=>t.root.toUpperCase()===String(root||"").toUpperCase()); return c?c.feed:null; }
+// Each issuer is priced against its OWN Chainlink feed. Feeds are total return: they already
+// include that issuer's multiplier, so a feed price is directly comparable to that token's DEX price.
+function feedFor(t){ return (t&&t.feed)||null; }
+// The same underlying priced by the other issuer, for the cross issuer view. Not a premium:
+// each issuer's token is its own claim with its own multiplier.
+function otherIssuerFeed(root){ const c=NETWORKS.base.tokens.find(t=>t.root.toUpperCase()===String(root||"").toUpperCase()); return c?{feed:c.feed,rpcs:NETWORKS.base.rpcs,label:"Coinbase on Base"}:null; }
 
 // ---------- helpers ----------
 let rpcIdx=0;
@@ -90,27 +99,37 @@ async function tokenCore(addr){
   return {addr,name,symbol,dec:d,supply:sup==null||d==null?null:Number(sup)/10**d,multiplier:mult==null?(reg&&reg.multiplier!=null?reg.multiplier:null):Number(mult)/1e18,uri,meta,isB20:isb,beacon,beaconOk:beacon?beacon.toLowerCase()===(NET.beacon||"").toLowerCase():null,paused,
     image:(meta&&typeof meta.image==="string"&&/^https:\/\//.test(meta.image))?meta.image:(reg&&reg.logo?reg.logo:null)};
 }
-async function oracleFeed(feed){
-  try{ const h=await rpcOn(NETWORKS.base.rpcs,"eth_call",[{to:feed,data:SEL.latestRoundData},"latest"]); if(!h||h.length<2+64*5) return null;
-    const ans=BigInt("0x"+h.slice(2+64,2+128)); const upd=parseInt(h.slice(2+64*3,2+64*4),16);
-    return {price:Number(ans)/1e8,updatedAt:upd,source:NET.key==="base"?"Chainlink (Base)":"Chainlink on Base, same underlying"}; }catch(e){ return null; }
+async function oracleFeed(feed,rpcs,label){
+  if(!feed) return null;
+  try{
+    const h=await rpcOn(rpcs||NET.rpcs,"eth_call",[{to:feed,data:SEL.latestRoundData},"latest"]);
+    if(!h||h.length<2+64*5) return null;
+    const raw=BigInt("0x"+h.slice(2+64,2+128));
+    const upd=parseInt(h.slice(2+64*3,2+64*4),16);
+    if(raw<=0n||!upd) return {error:"feed returned no usable value"};
+    let paused=null;
+    try{ const p=await rpcOn(rpcs||NET.rpcs,"eth_call",[{to:feed,data:SEL.oraclePaused},"latest"]); if(p&&p!=="0x") paused=/1$/.test(p); }catch(e){}
+    return {price:Number(raw)/1e8,updatedAt:upd,paused,source:label||NET.feedNote};
+  }catch(e){ return {error:"feed read failed"}; }
 }
-function feedFor(t){ return t.feed||baseFeedFor(t.root||t.symbol); }
 async function dex(addr){
   try{ const r=await fetch("https://api.dexscreener.com/latest/dex/tokens/"+addr); const j=await r.json();
     const a=addr.toLowerCase();
     const ps=(j.pairs||[]).filter(p=>p.chainId===NET.dexChain&&(p.baseToken.address.toLowerCase()===a||p.quoteToken.address.toLowerCase()===a)).map(p=>{
       const isBase=p.baseToken.address.toLowerCase()===a; const other=isBase?p.quoteToken:p.baseToken;
-      const pu=Number(p.priceUsd||0), pn=Number(p.priceNative||0);
-      const price=isBase?pu:(pn>0?pu/pn:null);
+      const pu=Number(p.priceUsd||0);
+      // Only trust priceUsd when OUR token is the base side of the pair. Inverting a pair whose
+      // base side is an unrelated token would price that token, not this one.
+      const price=(isBase&&pu>0)?pu:null;
       const chg=isBase?((p.priceChange||{}).h24??null):null;
-      return {p,other,price,chg,liq:(p.liquidity||{}).usd||0,good:QUOTES.has((other.symbol||"").toUpperCase())};
+      return {p,other,price,chg,liq:(p.liquidity||{}).usd||0,good:isBase&&QUOTES.has((other.symbol||"").toUpperCase())};
     });
     const sorted=ps.slice().sort((x,y)=>((y.good&&!!y.price)-(x.good&&!!x.price))||(y.liq-x.liq));
-    const b=sorted[0]||null;
+    const b=sorted.find(x=>x.price!=null)||null;
+    const quoteOnly=!b&&ps.length>0;
     const vol=ps.reduce((s,x)=>s+((x.p.volume||{}).h24||0),0);
     const chg=b?(b.chg!=null?b.chg:((sorted.find(x=>x.chg!=null)||{}).chg??null)):null;
-    return {pairs:ps.length,best:b?b.p:null,vol24:vol,price:b?b.price:null,liq:b?b.liq:null,venue:b?b.p.dexId:null,pairAddress:b?b.p.pairAddress:null,pairUrl:b?b.p.url:null,quote:b?b.other.symbol:null,chg};
+    return {pairs:ps.length,quoteOnly,best:b?b.p:null,vol24:vol,price:b?b.price:null,liq:b?b.liq:null,venue:b?b.p.dexId:null,pairAddress:b?b.p.pairAddress:null,pairUrl:b?b.p.url:null,quote:b?b.other.symbol:null,chg};
   }catch(e){ return {pairs:0,best:null,vol24:0,price:null,liq:null,chg:null}; }
 }
 async function lookalikes(root,self,extra){
@@ -127,16 +146,51 @@ async function lookalikes(root,self,extra){
   return Object.values(seen).sort((a,b)=>b.liq-a.liq).slice(0,10);
 }
 function holderFor(dx){ return NET.poolManager||dx.pairAddress||null; }
+// Direct policy read (Base only): B20 exposes policyId(bytes32 scope); the Policy Registry
+// precompile answers isAuthorized(policyId, account) and never reverts.
+async function policyRead(token, wallet, holder){
+  if(NET.verify!=="b20"||!wallet) return null;
+  const out={};
+  for(const [name,scope] of Object.entries(SCOPE)){
+    try{
+      const idHex=await call(token,SEL.policyId+scope);
+      if(!idHex||idHex==="0x") { out[name]={id:null,ok:null}; continue; }
+      const id=BigInt(idHex);
+      const who=name==="sender"?(holder||wallet):wallet;
+      const a=await rpcOn(NET.rpcs,"eth_call",[{to:POLICY_REGISTRY,data:SEL.isAuthorized+pad("0x"+id.toString(16))+pad(who)},"latest"]);
+      out[name]={id:id.toString(),ok:(a&&/1$/.test(a))?true:false,who};
+    }catch(e){ out[name]={id:null,ok:null,err:true}; }
+  }
+  return out;
+}
+function decodeRevert(msg){
+  const m=String(msg||"").match(/0x([0-9a-f]{8})/i);
+  if(!m) return null;
+  return ERRS[m[1].toLowerCase()]||("reverted with 0x"+m[1]);
+}
+// Simulation is a second, narrower signal: one sender, one recipient, one unit, this block.
 async function policyProbe(token, holder, to){
   if(!holder||!to) return {status:"unknown",detail:"no pool holder available to simulate from"};
-  try{ await call(token,SEL.transfer+pad(to)+pad("1"),holder); return {status:"ok",detail:"simulated 1 unit transfer from the top pool to your address succeeded. No policy block."}; }
-  catch(e){ const m=String(e.message||e); if(/db42144d/.test(m)) return {status:"unknown",detail:"pool holder has no balance right now, try again later"}; return {status:"blocked",detail:"transfer reverted, this address is blocked or the token is paused: "+m.slice(0,70)}; }
+  try{
+    const r=await call(token,SEL.transfer+pad(to)+pad("1"),holder);
+    if(r&&r!=="0x"&&!/1$/.test(r)) return {status:"unknown",detail:"transfer call returned false"};
+    if(!r||r==="0x") return {status:"unknown",detail:"empty return data, could not confirm"};
+    return {status:"ok",detail:"simulated 1 unit transfer from the deepest pool succeeded at the current block"};
+  }
+  catch(e){
+    const d=decodeRevert(e.message||e);
+    if(d&&/insufficient balance/.test(d)) return {status:"unknown",detail:"the simulated sender has no balance right now"};
+    if(d&&/policy forbids/.test(d)) return {status:"blocked",detail:"policy forbids this transfer"};
+    if(d&&/paused/.test(d)) return {status:"blocked",detail:"token transfers are paused"};
+    return {status:"unknown",detail:"simulation unavailable"+(d?": "+d:"")};
+  }
 }
 async function loadRow(t,light){
   const feed=feedFor(t);
-  const [core,orc,dx]=await Promise.all([light?Promise.resolve({addr:t.address,name:t.name,symbol:t.symbol,dec:t.decimals||18,supply:null,multiplier:t.multiplier!=null?t.multiplier:null,image:t.logo||null,isB20:null,beaconOk:null,paused:null}):tokenCore(t.address), feed?oracleFeed(feed):Promise.resolve(null), dex(t.address)]);
-  const prem=(dx.price&&orc&&orc.price)?(dx.price/orc.price-1)*100:null;
-  const mcap=(core.supply!=null&&orc)?core.supply*orc.price:null;
+  const [core,orc,dx]=await Promise.all([light?Promise.resolve({addr:t.address,name:t.name,symbol:t.symbol,dec:t.decimals||18,supply:null,multiplier:t.multiplier!=null?t.multiplier:null,image:t.logo||null,isB20:null,beaconOk:null,paused:null}):tokenCore(t.address), oracleFeed(feed,NET.rpcs), dex(t.address)]);
+  const good=orc&&orc.price>0&&!orc.error;
+  const prem=(dx.price>0&&good)?(dx.price/orc.price-1)*100:null;
+  const mcap=(core.supply!=null&&good)?core.supply*orc.price:null;
   const row={t,core,orc,dx,prem,mcap}; state.rows[t.address.toLowerCase()]=row; return row;
 }
 async function loadAll(onRow){
@@ -172,7 +226,7 @@ function marketStatus(){
 }
 function paintMarket(){
   const s=marketStatus(); const d=document.querySelector("#mkt .dot"); if(d){ d.className="dot "+(s.open?"on":"off"); document.getElementById("mkt_t").textContent=s.label; }
-  const b=document.getElementById("banner"); if(b){ if(!s.open){ b.style.display="block"; b.textContent="US markets are closed. Chainlink feeds freeze at the last close, so DEX prices can drift from the reference until the next open. Premiums shown now are against a frozen number."; } else b.style.display="none"; }
+  const b=document.getElementById("banner"); if(b){ if(!s.open){ b.style.display="block"; b.textContent="The US regular session is closed. These Chainlink feeds cover extended and overnight sessions 24/5 and stop over the weekend, so a reference may still be recent or may be hours old. Every price below carries the age of the reference it is measured against."; } else b.style.display="none"; }
 }
 
 // ---------- wallet ----------

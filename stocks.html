@@ -15,9 +15,9 @@
 
 <div class="grid">
   <div class="kpi"><b id="k_count">...</b><span id="k_count_l">Issued stocks</span></div>
-  <div class="kpi"><b id="k_liq">...</b><span>DEX liquidity, best pool per stock</span></div>
+  <div class="kpi"><b id="k_liq">...</b><span>DEX liquidity, deepest pool per stock</span></div>
   <div class="kpi"><b id="k_vol">...</b><span>24h DEX volume</span></div>
-  <div class="kpi"><b id="k_feed">...</b><span>Reference feeds fresh (last 3h)</span></div>
+  <div class="kpi"><b id="k_feed">...</b><span id="k_feed_l">Feeds updated in the last 3h</span></div>
 </div>
 <div class="search" style="margin-bottom:12px"><input id="filter" placeholder="Filter by ticker or name" autocomplete="off"></div>
 
@@ -34,15 +34,15 @@
 <script>
 mountNav("stocks.html"); mountFooter();
 document.getElementById("title").textContent="All "+NET.issuer+" tokenized stocks on "+NET.label;
-document.getElementById("lead").textContent=NET.key==="base"?"Every stock Coinbase has issued on Base, read live. Reference is the Chainlink total return feed, DEX is the best pool, premium is the gap between them.":"Every stock Robinhood has issued on Robinhood Chain, from Robinhood's own asset registry. Reference price is the Chainlink feed of the same underlying on Base where one exists, so you can compare the two issuers. Prices load progressively.";
+document.getElementById("lead").textContent=NET.key==="base"?"Every stock Coinbase has issued on Base, read live. Reference is that token's own Chainlink total return feed, which already includes the issuer multiplier, so it is directly comparable to the DEX price.":"Every stock Robinhood has issued on Robinhood Chain, from Robinhood's own asset registry. 32 of them have a Chainlink tokenized equity feed on Robinhood Chain; the rest show market data only. Prices load progressively.";
 document.getElementById("foot_note").textContent="Click a column to sort, click a row for the full check. Multiplier shows corporate actions (splits, dividends) applied to the token.";
 let sort={k:NET.key==="base"?"liq":"liq",dir:-1}, filter="";
-function sortKey(r){ const {t,core,orc,dx,prem,mcap}=r; return {sym:t.symbol,issuer:isOfficial(core)?1:0,oracle:orc?orc.price:-1,dex:dx.price||-1,chg:dx.chg==null?-1e9:dx.chg,prem:prem==null?-1e9:prem,mult:core.multiplier==null?-1:core.multiplier,liq:dx.liq||-1,vol:dx.vol24||-1,age:orc?-(Date.now()/1000-orc.updatedAt):-1e12}; }
+function sortKey(r){ const {t,core,orc,dx,prem,mcap}=r; return {sym:t.symbol,issuer:isOfficial(core)?1:0,oracle:(orc&&!orc.error&&orc.price>0)?orc.price:-1,dex:dx.price||-1,chg:dx.chg==null?-1e9:dx.chg,prem:prem==null?-1e9:prem,mult:core.multiplier==null?-1:core.multiplier,liq:dx.liq||-1,vol:dx.vol24||-1,age:(orc&&!orc.error&&orc.updatedAt)?-(Date.now()/1000-orc.updatedAt):-1e12}; }
 function rowHtml(r){ const {t,core,orc,dx,prem}=r;
   const pcls=prem==null?"mut":Math.abs(prem)<0.5?"ok":Math.abs(prem)<2?"warn":"bad";
-  const acls=orc&&Date.now()/1000-orc.updatedAt<3*3600?"ok":"warn";
+  const good=orc&&!orc.error&&orc.price>0; const acls=good&&Date.now()/1000-orc.updatedAt<3*3600?"ok":"warn";
   const issuer=NET.key==="base"?(isOfficial(core)?'<span class="tag ok">Coinbase</span>':'<span class="tag warn">check</span>'):'<span class="tag ok">Robinhood</span>';
-  return '<td>'+tokenCell(core,t)+'</td><td>'+issuer+'</td><td class="num">'+(orc?usd(orc.price):'<span class="note">no feed</span>')+'</td><td class="num">'+(dx.price?usd(dx.price):'<span class="note">'+(dx.pairs===undefined?"loading":"no pool")+'</span>')+'</td><td class="num">'+pct(dx.chg)+'</td><td class="num"><span class="tag '+pcls+'">'+(prem==null?"n/a":(prem>0?"+":"")+prem.toFixed(2)+"%")+'</span></td><td class="num">'+(core.multiplier==null?"n/a":(core.multiplier===1?'<span class="note">1.00</span>':'<b>'+core.multiplier.toFixed(4)+'</b>'))+'</td><td class="num">'+(dx.liq?usdBig(dx.liq):"n/a")+'</td><td class="num">'+(dx.vol24?usdBig(dx.vol24):"n/a")+'</td><td><span class="tag '+acls+'">'+(orc?ago(orc.updatedAt):"n/a")+'</span></td><td>'+(dx.price?tradeLinks(t,dx):'<span class="note">not trading yet</span>')+'</td>'; }
+  return '<td>'+tokenCell(core,t)+'</td><td>'+issuer+'</td><td class="num">'+(good?usd(orc.price)+(orc.paused?' <span class="tag warn">paused</span>':''):'<span class="note">no feed</span>')+'</td><td class="num">'+(dx.price?usd(dx.price):'<span class="note">'+(dx.pairs===undefined?"loading":(dx.quoteOnly?"quote side only":"no pool"))+'</span>')+'</td><td class="num">'+pct(dx.chg)+'</td><td class="num"><span class="tag '+pcls+'">'+(prem==null?"n/a":(prem>0?"+":"")+prem.toFixed(2)+"%")+'</span></td><td class="num">'+(core.multiplier==null?"n/a":(core.multiplier===1?'<span class="note">1.00</span>':'<b>'+core.multiplier.toFixed(4)+'</b>'))+'</td><td class="num">'+(dx.liq?usdBig(dx.liq):"n/a")+'</td><td class="num">'+(dx.vol24?usdBig(dx.vol24):"n/a")+'</td><td>'+(good?'<span class="tag '+acls+'">'+ago(orc.updatedAt)+'</span>':'<span class="note">n/a</span>')+'</td><td>'+(dx.price?tradeLinks(t,dx):'<span class="note">not trading yet</span>')+'</td>'; }
 function render(){
   const rows=document.getElementById("rows"); rows.innerHTML="";
   const f=filter.toLowerCase();
@@ -51,7 +51,7 @@ function render(){
   for(const r of list){ const tr=document.createElement("tr"); tr.className="row"; tr.dataset.a=r.t.address.toLowerCase(); tr.onclick=(e)=>{ if(e.target.closest("a")) return; location.href=withNet("check.html?q="+r.t.address); }; tr.innerHTML=rowHtml(r); rows.appendChild(tr); }
   if(!list.length) rows.innerHTML='<tr><td colspan="11" class="note">No match.</td></tr>';
 }
-function kpis(){ let liq=0,vol=0,fresh=0,feeds=0; for(const r of Object.values(state.rows)){ liq+=r.dx.liq||0; vol+=r.dx.vol24||0; if(r.orc){feeds++; if(Date.now()/1000-r.orc.updatedAt<3*3600) fresh++;} }
+function kpis(){ let liq=0,vol=0,fresh=0,feeds=0; for(const r of Object.values(state.rows)){ liq+=r.dx.liq||0; vol+=r.dx.vol24||0; if(r.orc&&!r.orc.error&&r.orc.price>0){feeds++; if(Date.now()/1000-r.orc.updatedAt<3*3600) fresh++;} }
   document.getElementById("k_liq").textContent=usdBig(liq); document.getElementById("k_vol").textContent=usdBig(vol); document.getElementById("k_feed").textContent=fresh+" / "+feeds; }
 document.querySelectorAll("#main th[data-k]").forEach(th=>th.onclick=()=>{ const k=th.dataset.k; sort=(sort.k===k)?{k,dir:-sort.dir}:{k,dir:k==="sym"?1:-1}; render(); });
 document.getElementById("filter").oninput=(e)=>{ filter=e.target.value; render(); };

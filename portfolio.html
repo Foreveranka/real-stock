@@ -18,7 +18,7 @@
 <script src="app.js"></script>
 <script>
 mountNav("portfolio.html"); mountFooter();
-document.getElementById("lead").textContent="Connect a wallet to see which "+NET.issuer+" tokenized stocks it holds on "+NET.label+", valued at the reference price, and whether the transfer policy lets this wallet receive each one.";
+document.getElementById("lead").textContent="Connect a wallet to see which "+NET.issuer+" tokenized stocks it holds on "+NET.label+", valued at each token's own Chainlink feed. Holdings without a feed are listed but not priced, and the subtotal says how many were priced. Reference value is not a liquidation quote.";
 async function load(){
   const pf=document.getElementById("pf"); if(!state.wallet) return;
   pf.innerHTML='<div class="card"><div class="total"><div><h3 style="margin:0 0 4px">Holdings on '+esc(NET.label)+'</h3><span class="note">'+state.wallet+'</span></div><b id="pf_total">...</b></div><div class="tblwrap"><table><thead><tr><th>Stock</th><th class="num">Balance</th><th class="num">Reference</th><th class="num">Value</th><th class="num">24h</th><th>Policy</th><th>Trade</th></tr></thead><tbody id="pf_rows"><tr><td colspan="7" class="note">Reading balances...</td></tr></tbody></table></div></div>';
@@ -29,13 +29,13 @@ async function load(){
   if(!held.length){ tb.innerHTML='<tr><td colspan="7" class="note">This wallet holds none of the '+toks.length+' '+esc(NET.issuer)+' tokenized stocks on '+esc(NET.label)+'.</td></tr>'; document.getElementById("pf_total").textContent="$0"; return; }
   const rows=await pool(held,x=>loadRow(x.t,false),6);
   const pols=await pool(held,(x,i)=>policyProbe(x.t.address,holderFor(rows[i].dx),state.wallet),6);
-  let total=0;
-  held.forEach((x,i)=>{ const r=rows[i]; if(!r) return; const q=Number(x.bal)/10**(r.core.dec||18); const v=r.orc?q*r.orc.price:(r.dx.price?q*r.dx.price:null); if(v) total+=v;
+  let total=0, priced=0;
+  held.forEach((x,i)=>{ const r=rows[i]; if(!r) return; const q=Number(x.bal)/10**(r.core.dec||18); const good=r.orc&&!r.orc.error&&r.orc.price>0; const v=good?q*r.orc.price:null; if(v!=null){ total+=v; priced++; }
     const p=pols[i]||{status:"unknown",detail:"n/a"}; const ptag=p.status==="ok"?'<span class="tag ok">can receive</span>':p.status==="blocked"?'<span class="tag bad">blocked</span>':'<span class="tag mut">'+esc(p.detail)+'</span>';
     const tr=document.createElement("tr"); tr.className="row"; tr.onclick=(e)=>{ if(e.target.closest("a")) return; location.href=withNet("check.html?q="+x.t.address); };
-    tr.innerHTML='<td>'+tokenCell(r.core,x.t)+'</td><td class="num">'+fmt(q,6)+'</td><td class="num">'+(r.orc?usd(r.orc.price):(r.dx.price?usd(r.dx.price)+' <span class="note">DEX</span>':"n/a"))+'</td><td class="num"><b>'+usd(v)+'</b></td><td class="num">'+pct(r.dx.chg)+'</td><td>'+ptag+'</td><td>'+(r.dx.price?tradeLinks(x.t,r.dx):'<span class="note">not trading yet</span>')+'</td>';
+    tr.innerHTML='<td>'+tokenCell(r.core,x.t)+'</td><td class="num">'+fmt(q,6)+'</td><td class="num">'+(good?usd(r.orc.price):'<span class="note">no feed</span>')+'</td><td class="num">'+(v!=null?'<b>'+usd(v)+'</b>':'<span class="note">not priced</span>')+'</td><td class="num">'+pct(r.dx.chg)+'</td><td>'+ptag+'</td><td>'+(r.dx.price?tradeLinks(x.t,r.dx):'<span class="note">not trading yet</span>')+'</td>';
     tb.appendChild(tr); });
-  document.getElementById("pf_total").textContent=usd(total);
+  document.getElementById("pf_total").innerHTML=usd(total)+' <span class="note" style="font-size:13px">reference subtotal, '+priced+' of '+held.length+' holdings priced</span>';
 }
 document.addEventListener("wallet",e=>{ if(e.detail) load(); else document.getElementById("pf").innerHTML='<div class="empty">No wallet connected. <button class="btn" style="margin-left:10px" onclick="connectWallet()">Connect wallet</button></div>'; });
 </script>
