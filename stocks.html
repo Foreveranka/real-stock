@@ -4,22 +4,21 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Stocks, Real Stock</title>
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="style.css?v=3">
 </head>
 <body>
 <div class="wrap">
-<nav id="nav"></nav>
-<h1 class="page" id="title">All tokenized stocks</h1>
-<p class="lead" id="lead"></p>
-<div class="banner" id="banner"></div>
+<header id="nav"></header>
+<p class="eyebrow" style="margin-top:16px">Issued tokens</p><h2 class="section" id="title">All tokenized stocks</h2>
+<p class="note" id="lead" style="max-width:760px;margin:8px 0 24px"></p>
 
-<div class="grid">
-  <div class="kpi"><b id="k_count">...</b><span id="k_count_l">Issued stocks</span></div>
-  <div class="kpi"><b id="k_liq">...</b><span>DEX liquidity, deepest pool per stock</span></div>
-  <div class="kpi"><b id="k_vol">...</b><span>24h DEX volume</span></div>
-  <div class="kpi"><b id="k_feed">...</b><span id="k_feed_l">Feeds updated in the last 3h</span></div>
+<div style="display:flex;gap:40px;flex-wrap:wrap;border-top:1px solid var(--rule);border-bottom:1px solid var(--rule);padding:20px 0;margin-bottom:24px">
+  <div><div class="value" id="k_count" style="font-size:24px;line-height:32px">—</div><div class="eyebrow" style="margin:4px 0 0" id="k_count_l">Issued tokens</div></div>
+  <div><div class="value" id="k_liq" style="font-size:24px;line-height:32px">—</div><div class="eyebrow" style="margin:4px 0 0">Reported liquidity</div></div>
+  <div><div class="value" id="k_vol" style="font-size:24px;line-height:32px">—</div><div class="eyebrow" style="margin:4px 0 0">24h DEX volume</div></div>
+  <div><div class="value" id="k_feed" style="font-size:24px;line-height:32px">—</div><div class="eyebrow" style="margin:4px 0 0">Feeds under 3h old</div></div>
 </div>
-<div class="search" style="margin-bottom:12px"><input id="filter" placeholder="Filter by ticker or name" autocomplete="off"></div>
+<div class="field" style="margin-bottom:20px;max-width:420px"><input id="filter" placeholder="Filter by ticker or name" autocomplete="off" style="border-right:1px solid var(--rule);border-radius:4px"></div>
 
 <div class="tblwrap"><table id="main">
 <thead><tr>
@@ -27,10 +26,10 @@
 </tr></thead>
 <tbody id="rows"><tr><td colspan="11" class="note">Loading...</td></tr></tbody>
 </table></div>
-<p class="note" id="foot_note"></p>
+<p class="note" id="foot_note" style="margin-top:16px"></p>
 <footer id="foot"></footer>
 </div>
-<script src="app.js"></script>
+<script src="app.js?v=3"></script>
 <script>
 mountNav("stocks.html"); mountFooter();
 document.getElementById("title").textContent="All "+NET.issuer+" tokenized stocks on "+NET.label;
@@ -39,10 +38,9 @@ document.getElementById("foot_note").textContent="Click a column to sort, click 
 let sort={k:NET.key==="base"?"liq":"liq",dir:-1}, filter="";
 function sortKey(r){ const {t,core,orc,dx,prem,mcap}=r; return {sym:t.symbol,issuer:isOfficial(core)?1:0,oracle:(orc&&!orc.error&&orc.price>0)?orc.price:-1,dex:dx.price||-1,chg:dx.chg==null?-1e9:dx.chg,prem:prem==null?-1e9:prem,mult:core.multiplier==null?-1:core.multiplier,liq:dx.liq||-1,vol:dx.vol24||-1,age:(orc&&!orc.error&&orc.updatedAt)?-(Date.now()/1000-orc.updatedAt):-1e12}; }
 function rowHtml(r){ const {t,core,orc,dx,prem}=r;
-  const pcls=prem==null?"mut":Math.abs(prem)<0.5?"ok":Math.abs(prem)<2?"warn":"bad";
-  const good=orc&&!orc.error&&orc.price>0; const acls=good&&Date.now()/1000-orc.updatedAt<3*3600?"ok":"warn";
-  const issuer=NET.key==="base"?(isOfficial(core)?'<span class="tag ok">Coinbase</span>':'<span class="tag warn">check</span>'):'<span class="tag ok">Robinhood</span>';
-  return '<td>'+tokenCell(core,t)+'</td><td>'+issuer+'</td><td class="num">'+(good?usd(orc.price)+(orc.paused?' <span class="tag warn">paused</span>':''):'<span class="note">no feed</span>')+'</td><td class="num">'+(dx.price?usd(dx.price):'<span class="note">'+(dx.pairs===undefined?"loading":(dx.quoteOnly?"quote side only":"no pool"))+'</span>')+'</td><td class="num">'+pct(dx.chg)+'</td><td class="num"><span class="tag '+pcls+'">'+(prem==null?"n/a":(prem>0?"+":"")+prem.toFixed(2)+"%")+'</span></td><td class="num">'+(core.multiplier==null?"n/a":(core.multiplier===1?'<span class="note">1.00</span>':'<b>'+core.multiplier.toFixed(4)+'</b>'))+'</td><td class="num">'+(dx.liq?usdBig(dx.liq):"n/a")+'</td><td class="num">'+(dx.vol24?usdBig(dx.vol24):"n/a")+'</td><td>'+(good?'<span class="tag '+acls+'">'+ago(orc.updatedAt)+'</span>':'<span class="note">n/a</span>')+'</td><td>'+(dx.price?tradeLinks(t,dx):'<span class="note">not trading yet</span>')+'</td>'; }
+  const good=orc&&!orc.error&&orc.price>0;
+  const issuer=esc(NET.issuer);
+  return '<td>'+tokenCell(core,t)+'</td><td>'+issuer+'</td><td class="num">'+(good?usd(orc.price)+(orc.paused?' <span class="warnv">paused</span>':''):'<span class="sub">no feed</span>')+'</td><td class="num">'+(dx.price?usd(dx.price):(dx.pairs===undefined?'<span class="sk" style="width:60px"></span>':'<span class="sub">'+(dx.quoteOnly?"quote only":"no pool")+'</span>'))+'</td><td class="num">'+pct(dx.chg)+'</td><td class="num">'+(prem==null?'<span class="sub">—</span>':(prem>=0?"+":"\u2212")+Math.abs(prem).toFixed(2)+"%")+'</td><td class="num">'+(core.multiplier==null?'<span class="sub">—</span>':(core.multiplier===1?'<span class="sub">1.00</span>':core.multiplier.toFixed(4)))+'</td><td class="num">'+(dx.liq?usdBig(dx.liq):'<span class="sub">—</span>')+'</td><td class="num">'+(dx.vol24?usdBig(dx.vol24):'<span class="sub">—</span>')+'</td><td class="num'+(good&&Date.now()/1000-orc.updatedAt>=3*3600?' warnv':'')+'">'+(good?ago(orc.updatedAt):'<span class="sub">—</span>')+'</td><td>'+(dx.price?tradeLinks(t,dx):'<span class="sub">—</span>')+'</td>'; }
 function render(){
   const rows=document.getElementById("rows"); rows.innerHTML="";
   const f=filter.toLowerCase();

@@ -4,87 +4,131 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Check, Real Stock</title>
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="style.css?v=3">
 </head>
 <body>
 <div class="wrap">
-<nav id="nav"></nav>
-<h1 class="page">Check a token</h1>
-<p class="lead" id="lead"></p>
-<form class="search" id="form">
-  <input id="q" placeholder="0x... address or ticker (AAPL, NVDA, TSLA)" autocomplete="off">
-  <button class="btn" type="submit">Check</button>
-</form>
-<div class="quick" id="quick"></div>
-<div class="banner" id="banner"></div>
-<div id="detail"></div>
+<header id="nav"></header>
+<main class="main">
+  <form class="field" id="form" style="margin-bottom:8px">
+    <input id="q" placeholder="0x… contract address or ticker" autocomplete="off" aria-label="Token contract address">
+    <button class="btn" type="submit">Check token</button>
+  </form>
+  <div id="err" class="note warnv" style="min-height:20px"></div>
+  <div id="result" aria-live="polite"></div>
+</main>
 <footer id="foot"></footer>
 </div>
-<script src="app.js"></script>
+<script src="app.js?v=3"></script>
 <script>
 mountNav("index.html"); mountFooter();
-document.getElementById("lead").textContent="Onchain checks for one "+NET.label+" address: issuer, contract fingerprint, corporate actions, reference price, DEX price, transfer policy for your wallet, and look alikes.";
-document.getElementById("form").onsubmit=(e)=>{ e.preventDefault(); const v=document.getElementById("q").value.trim(); if(v) location.href=withNet("check.html?q="+encodeURIComponent(v)); };
+document.getElementById("form").onsubmit=(e)=>{
+  e.preventDefault(); const v=document.getElementById("q").value.trim();
+  if(!v) return;
+  if(/^0x/i.test(v)&&!/^0x[0-9a-fA-F]{40}$/.test(v)){ document.getElementById("err").textContent="Enter a complete 0x contract address."; return; }
+  location.href=withNet("check.html?q="+encodeURIComponent(v));
+};
 let current=null;
+
+function shell(addr,reg,core){
+  const id=(core&&core.name)||(reg&&reg.name)||"Unknown token";
+  const sym=(core&&core.symbol)||(reg&&reg.symbol)||"";
+  return '<div style="padding:8px 0 20px"><h2 class="section">'+esc(id)+'</h2>'
+    +'<div class="small sub">'+(sym?esc(sym)+' · ':'')+esc(NET.label)+'</div>'
+    +'<div class="meta" style="margin-top:8px">'+addr+' <button class="linkbtn" onclick="navigator.clipboard&&navigator.clipboard.writeText(\''+addr+'\');this.textContent=\'copied\'">copy</button></div></div>'
+    +'<section class="block" id="vblock"><p class="eyebrow">Issuer check</p><div class="vhead"><div id="vicon" style="width:32px"></div><div><p class="verdict" id="vtext">Checking issuer…</p><p class="sub" id="vwhy" style="margin:12px 0 0;max-width:640px"></p></div></div></section>'
+    +'<section class="cols"><div><p class="eyebrow">Market / reference</p><div id="pricebox"><div class="value"><span class="sk" style="width:140px"></span></div></div></div>'
+    +'<div><p class="eyebrow">Wallet receipt</p><div id="recbox"><p class="section" style="font-size:24px;margin:0">Checking…</p></div></div></section>'
+    +'<details class="ev" id="evd"><summary>Inspect 8 onchain checks</summary><div id="evrows"></div></details>'
+    +'<div class="meta" style="margin-top:20px" id="footmeta"></div>';
+}
+
 async function run(input){
-  const box=document.getElementById("detail");
+  const box=document.getElementById("result");
   await loadRegistry();
-  document.getElementById("quick").innerHTML=(NET.tokens||[]).slice(0,NET.key==="base"?13:16).map(t=>'<a href="'+withNet("check.html?q="+t.address)+'">'+esc(t.symbol)+'</a>').join("")+(NET.tokens.length>16?'<a href="'+withNet("stocks.html")+'">all '+NET.tokens.length+'</a>':"");
   const addr=resolve(input);
-  if(!addr){ box.innerHTML='<div class="card"><div class="verdict bad">Not found</div><div class="note">Enter a '+esc(NET.label)+' token address or a ticker from the list.</div></div>'; return; }
-  current=addr; box.innerHTML='<div class="card note">Checking onchain...</div>';
+  if(!addr){ box.innerHTML='<section class="block"><p class="eyebrow">Issuer check</p><p class="verdict">No listed token matches this search.</p><p class="sub" style="margin-top:12px">Paste a contract address to check it directly.</p></section>'; return; }
+  current=addr;
   const reg=state.byAddr[addr.toLowerCase()];
+  box.innerHTML=shell(addr,reg,null);
+  const rows=document.getElementById("evrows");
+  const names=["Issuer list membership","Contract fingerprint","Name and metadata","Corporate action multiplier","Reference price","Market price","Transfer policy","Look alike tokens"];
+  rows.innerHTML=names.map((n,i)=>evrow(i+1,"pending",n,"Pending","")).join("");
+
   const r=await loadRow(reg||{address:addr,symbol:null,name:null,root:null},false);
   const {core,orc,dx,prem}=r;
+  box.querySelector(".section").textContent=core.name||"Unknown token";
   const symRoot=(core.symbol||"").replace(/c$/i,"");
   const target=!reg&&core.symbol?(NET.tokens||[]).find(t=>(t.root||t.symbol).toUpperCase()===symRoot.toUpperCase()):null;
   const root=reg?(reg.root||reg.symbol).replace(/c$/,""):(target?(target.root||target.symbol).replace(/c$/,""):symRoot);
   const extra=reg?(reg.name||"").split(/\s+/)[0]:(target?target.name:(core.name||"").split(/\s+/)[0]);
-  const [likes,pol,pr]=await Promise.all([root?lookalikes(root,addr,extra):Promise.resolve([]), state.wallet?policyProbe(addr,holderFor(dx),state.wallet):Promise.resolve(null), state.wallet?policyRead(addr,state.wallet,holderFor(dx)):Promise.resolve(null)]);
-  const share='<button class="btn sec sm" onclick="navigator.clipboard&&navigator.clipboard.writeText(location.href);this.textContent=\'Link copied\'">Share this check</button>';
-  const verdict=reg?'<div class="verdict ok"><span>Issued by '+NET.issuer+': '+esc(reg.symbol)+' ('+esc(reg.name)+')</span>'+share+'</div>':(target?'<div class="verdict bad"><span>Not issued by '+NET.issuer+'. Looks like '+esc(target.symbol)+'</span>'+share+'</div>':'<div class="verdict bad"><span>Not on the '+NET.issuer+' issued list</span>'+share+'</div>');
-  function metaHost(u){ try{ const x=new URL(u); return (x.protocol==="https:"&&!x.username&&!x.password)?x.hostname.toLowerCase():null; }catch(e){ return null; } }
+
+  // verdict
+  const vt=document.getElementById("vtext"), vi=document.getElementById("vicon"), vw=document.getElementById("vwhy");
+  if(reg){ vt.textContent="Issuer match confirmed"; vi.innerHTML=ICON.big.pass;
+    vw.textContent="This address is on "+NET.issuer+"'s published list"+(reg.isin?", ISIN "+reg.isin:"")+", and the contract fingerprint agrees."; }
+  else { vt.textContent="Not on the issuer list"; vi.innerHTML=ICON.big.fail;
+    vw.textContent=NET.issuer+" does not publish this address"+(target?", and it copies the ticker of "+target.symbol:"")+". That means it is not an issuer token, not that it is proven fraudulent."; }
+
+  // price column
+  const pb=document.getElementById("pricebox");
+  if(dx.price){
+    pb.innerHTML='<div class="value">'+usd(dx.price)+'</div>'
+      +'<div class="small" style="margin-top:8px">'+(orc&&!orc.error&&orc.price>0?'Reference '+usd(orc.price)+' <span class="sub">as of '+ago(orc.updatedAt)+' ago'+(orc.paused?', feed paused':'')+'</span>':'<span class="warnv">Reference unavailable</span>')+'</div>'
+      +(prem!=null?'<div class="small" style="margin-top:4px">'+(prem>=0?"+":"−")+Math.abs(prem).toFixed(2)+'% versus reference</div>':'')
+      +'<div class="small sub" style="margin-top:4px">'+(dx.liq?usdBig(dx.liq)+' reported liquidity on '+esc(dx.venue):'no pool')+' · '+sessionNote()+'</div>';
+  } else {
+    pb.innerHTML='<div class="value sub">—</div><div class="small sub" style="margin-top:8px">'+(dx.quoteOnly?"This token only appears as the quote side of a pair, so no independent price can be read.":"No liquidity pool found on "+esc(NET.label))+'</div>';
+  }
+
+  const [likes,pol,pr]=await Promise.all([
+    root?lookalikes(root,addr,extra):Promise.resolve([]),
+    state.wallet?policyProbe(addr,holderFor(dx),state.wallet):Promise.resolve(null),
+    state.wallet?policyRead(addr,state.wallet,holderFor(dx)):Promise.resolve(null)]);
+
+  // receipt column
+  const rb=document.getElementById("recbox");
+  if(core.paused){ rb.innerHTML='<p class="section warnv" style="font-size:24px;margin:0">Transfers paused by the issuer</p><p class="small sub" style="margin-top:8px">No address can receive this token right now.</p>'; }
+  else if(!state.wallet){ rb.innerHTML='<p class="section" style="font-size:24px;margin:0">Connect a wallet to test receipt</p><button class="btn sm" style="margin-top:12px" onclick="connectWallet()">Connect wallet</button>'; }
+  else {
+    const rx=pr&&pr.receiver;
+    let headline="Receive simulation passed", warn=false;
+    if(rx&&rx.unknownPolicy){ headline="Policy id not known to the registry"; warn=true; }
+    else if(rx&&rx.ok===false){ headline="Receiver policy denies this address"; warn=true; }
+    else if(pol&&pol.status==="blocked"){ headline="Transfer reverted"; warn=true; }
+    else if(pol&&pol.status!=="ok"){ headline="Receipt check unavailable"; warn=true; }
+    rb.innerHTML='<p class="section'+(warn?" warnv":"")+'" style="font-size:24px;margin:0">'+esc(headline)+'</p>'
+      +'<div class="small sub" style="margin-top:8px">'+short(state.wallet)+' · 1 unit · current block</div>'
+      +(pr?'<div class="small sub" style="margin-top:4px">policy ids receiver '+esc((rx&&rx.id)||"n/a")+', sender '+esc((pr.sender&&pr.sender.id)||"n/a")+', executor '+esc((pr.executor&&pr.executor.id)||"n/a")+'</div>':'')
+      +'<div class="small sub" style="margin-top:4px">Covers this transfer only, not any particular swap route or allowance.</div>';
+  }
+
+  // evidence rows
   const metaImg=core.meta&&typeof core.meta.image==="string"?core.meta.image:null;
-  const metaHostName=metaImg?metaHost(metaImg):null;
-  const metaCB=metaHostName==="metadata.coinbase.com";
-  const fp=NET.verify==="b20"
-    ?[chk(core.isB20?"ok":"warn","B20 token (Base native standard)",core.isB20?"Created through B20Factory. The factory is open, so B20 alone does not prove the issuer.":"Not a B20 token. Coinbase stocks are always B20."),
-      chk(metaCB?"ok":(core.uri?"warn":"warn"),"Issuer metadata host",metaHostName?("resolves to "+esc(metaHostName)+(metaCB?", Coinbase\u0027s metadata host. Corroboration only: metadata can be copied, the address list is what decides.":", not Coinbase\u0027s metadata host")):(core.uri?"contractURI present but no https image host to parse":"no contractURI, metadata may be unavailable rather than fake"))]
-    :[chk(core.beaconOk?"ok":"bad","Contract fingerprint: Robinhood beacon proxy",core.beacon?"beacon "+core.beacon+(core.beaconOk?" matches every official Robinhood Stock Token":" is not Robinhood's beacon "+NET.beacon):"no beacon slot, not a Robinhood proxy"),
-      chk(core.name&&/• Robinhood Token$/.test(core.name)?"ok":"bad","Name carries the official suffix",core.name?esc(core.name):"no name")];
-  const mult=core.multiplier; const pend=reg&&reg.pendingMultiplier?Number(reg.pendingMultiplier):null;
-  const checks=[
-    chk(reg?"ok":"bad","On the "+NET.issuer+" canonical list (matched by address)",reg?addr+(reg.isin?", ISIN "+esc(reg.isin):"")+(reg.chainId?", chain "+reg.chainId:"")+(NET.fetchedAt?", from the issuer list captured "+esc(NET.fetchedAt):""):"Not found in the "+NET.issuer+" list published at "+NET.listName+". That means it is not an issuer token, not that it is proven fraudulent."+(target?' The real one is <a href="'+withNet("check.html?q="+target.address)+'">'+esc(target.symbol)+'</a>.':"")),
-    fp[0],fp[1],
-    chk(mult==null?"warn":(pend?"warn":"ok"),"Multiplier (corporate actions)",mult==null?"not readable":mult.toFixed(6)+" (token price = share price x multiplier)"+(pend?", pending update to "+pend:"")+(mult!==1?". A non 1 multiplier means a split or dividend was applied.":"")),
-    chk(!orc?"mut":(orc.error?"warn":(orc.paused?"warn":(Date.now()/1000-orc.updatedAt<3*3600?"ok":"warn"))),"Reference price",!orc?"no Chainlink feed published for this token":(orc.error?esc(orc.error):usd(orc.price)+" as of "+ago(orc.updatedAt)+" ago, from the "+esc(orc.source)+"."+(orc.paused?" The feed is currently paused, which happens during corporate actions.":" Feeds cover 24/5 US equity sessions and stop over the weekend."))),
-    chk(dx.price?(prem!=null&&Math.abs(prem)<0.5?"ok":"warn"):"warn","DEX price vs reference",dx.quoteOnly?"this token only appears as the quote side of "+dx.pairs+" pair(s), so no independent USD price can be read from them":dx.price?usd(dx.price)+" on "+esc(dx.venue)+" ("+esc(dx.quote)+"), premium "+(prem==null?"n/a":(prem>0?"+":"")+prem.toFixed(2)+"%")+", liquidity "+usdBig(dx.liq)+", 24h "+(dx.chg==null?"n/a":(dx.chg>0?"+":"")+dx.chg+"%"):"no liquidity pool found on "+esc(NET.label)),
-    (function(){
-      if(core.paused) return chk("bad","Receive check","The token is paused by the issuer, so transfers revert for everyone right now.");
-      if(!state.wallet) return chk("mut","Receive check","Connect a wallet to read the transfer policy for your address and simulate a receipt. "+(NET.key==="base"?"Coinbase gates transfers through an onchain policy registry; note that approve() is not policy checked.":"Robinhood tokens carry pause and blocklist controls."));
-      let head="", cls="warn", body=[];
-      if(pr){
-        const rx=pr.receiver, sx=pr.sender, ex=pr.executor;
-        const known=[rx,sx,ex].filter(x=>x&&x.ok!==null);
-        if(rx&&rx.ok===false){ cls="bad"; head="Receiver policy denies this address."; }
-        else if(known.length&&known.every(x=>x.ok===true)){ cls="ok"; head="Policy registry authorises this address for receive, send and execute."; }
-        else head="Policy read incomplete.";
-        body.push("Policy ids: receiver "+(rx&&rx.id||"n/a")+", sender "+(sx&&sx.id||"n/a")+", executor "+(ex&&ex.id||"n/a")+".");
-      } else head="Policy registry not exposed on this network, using simulation only.";
-      if(pol){ body.push("Simulation: "+pol.detail+"."); if(pol.status==="blocked") cls="bad"; }
-      body.push("This covers a direct transfer of this token to "+short(state.wallet)+" at the current block. It does not promise that any particular swap route, allowance or execution path will succeed.");
-      return chk(cls,"Receive check",head+" "+body.join(" "));
-    })(),
-    chk(likes.length?"warn":"ok","Look alike tokens on "+NET.label,likes.length?likes.length+" other token(s) use this name or ticker, listed below":"none found on DexScreener")
-  ].join("");
-  const likesHtml=likes.length?'<div class="card"><h3>Look alikes (not issued by '+NET.issuer+')</h3>'+likes.map(l=>'<div class="chk"><div class="ic bad">X</div><div><div class="t">'+esc(l.name)+' <span class="note">('+esc(l.symbol)+')</span></div><div class="d mono">'+l.addr+', liquidity '+usdBig(l.liq)+' <a href="'+withNet("check.html?q="+l.addr)+'">check it</a></div></div></div>').join("")+'</div>':"";
-  const tw=(x)=>{ const v=String((x||{}).whole||""); return v.includes("TRADABLE")?"open":v?"closed":"n/a"; };
-  const trading=reg&&reg.trading?'<div class="note" style="margin-top:8px">Issuer trading windows: regular '+tw(reg.trading.market)+', extended '+tw(reg.trading.extended)+', overnight '+tw(reg.trading.overnight)+'</div>':"";
-  box.innerHTML='<div class="card"><h2>'+logo(core,reg)+'<span>'+esc(core.name||"Unknown token")+' <span class="note">'+esc(core.symbol||"")+'</span></span></h2>'+verdict+'<div class="checks">'+checks+'</div>'+trading+'<div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">'+(dx.price?tradeLinks(reg||{address:addr},dx):"")+infoLinks(addr)+'</div><div class="mono" style="margin-top:12px">token '+addr+(reg&&reg.feed?", feed "+reg.feed:"")+(dx.pairAddress?", pool "+dx.pairAddress:"")+'</div></div>'+likesHtml;
+  function metaHost(u){ try{ const x=new URL(u); return (x.protocol==="https:"&&!x.username&&!x.password)?x.hostname.toLowerCase():null; }catch(e){ return null; } }
+  const mh=metaImg?metaHost(metaImg):null;
+  const metaOk=NET.verify==="b20"?(mh==="metadata.coinbase.com"):(!!core.name&&/• Robinhood Token$/.test(core.name));
+  const fpOk=NET.verify==="b20"?core.isB20:core.beaconOk;
+  const mult=core.multiplier, pend=core.pending;
+  const good=orc&&!orc.error&&orc.price>0;
+  const evs=[
+    [reg?"pass":"fail","Issuer list membership",reg?"Listed":"Not listed",reg?(NET.issuer+" publishes this address"+(NET.fetchedAt?", snapshot "+esc(NET.fetchedAt):"")+(reg.chainId?", chain "+reg.chainId:"")):"Checked against "+NET.listName],
+    [fpOk?"pass":"unknown","Contract fingerprint",fpOk?"Matches":"No match",NET.verify==="b20"?"B20Factory recognises this token. The factory is open to anyone, so this alone does not identify the issuer.":(core.beacon?"Beacon slot "+core.beacon:"No beacon slot found")],
+    [metaOk?"pass":"unknown","Name and metadata",metaOk?"Consistent":"Inconsistent",NET.verify==="b20"?(mh?"Metadata host resolves to "+esc(mh)+". Corroboration only, a URL can be copied.":"No parseable https metadata host"):esc(core.name||"no name")],
+    [mult==null?"unknown":(pend?"unknown":"pass"),"Corporate action multiplier",mult==null?"Unreadable":mult.toFixed(6),mult==null?"This token does not expose a multiplier":"Read onchain. The reference feed already includes it."+(pend?" A change to "+pend.value.toFixed(6)+" is pending.":"")],
+    [good?(Date.now()/1000-orc.updatedAt<3*3600?"pass":"unknown"):"unknown","Reference price",good?usd(orc.price):"Unavailable",good?("Updated "+ago(orc.updatedAt)+" ago from the "+esc(orc.source)+(orc.paused?". The feed is paused, which happens during corporate actions.":"")):"No Chainlink feed published for this token"],
+    [dx.price?"pass":"unknown","Market price",dx.price?usd(dx.price):"No pool",dx.price?("Deepest pool on "+esc(dx.venue)+" against "+esc(dx.quote)+", "+usdBig(dx.liq)+" reported liquidity"):"Nothing tradable found on "+esc(NET.label)],
+    [!state.wallet?"unknown":(document.querySelector("#recbox .warnv")?"fail":"pass"),"Transfer policy",!state.wallet?"Not tested":(document.querySelector("#recbox .warnv")?"Attention":"Passed"),!state.wallet?"Connect a wallet to read the policy registry":"Read from the policy registry and confirmed by simulation"],
+    [likes.length?"unknown":"pass","Look alike tokens",likes.length?String(likes.length)+" found":"None found",likes.length?likes.map(l=>'<a href="'+withNet("check.html?q="+l.addr)+'">'+esc(l.symbol)+'</a> '+usdBig(l.liq)).join(" · "):"DexScreener returns no other token using this name or ticker on "+esc(NET.label)]
+  ];
+  rows.innerHTML=evs.map((e,i)=>evrow(i+1,e[0],e[1],e[2],e[3])).join("");
+  if(evs.some(e=>e[0]==="fail")||!reg) document.getElementById("evd").open=true;
+
+  document.getElementById("footmeta").innerHTML="Checked "+new Date().toISOString().slice(0,16).replace("T"," ")+" UTC · token "+addr+(reg&&reg.feed?" · feed "+reg.feed:"")+(dx.pairAddress?" · pool "+dx.pairAddress:"")+" · "+infoLinks(addr)+(dx.price?" "+tradeLinks(reg||{address:addr},dx):"");
 }
 document.addEventListener("wallet",()=>{ if(current) run(current); });
 const q=new URLSearchParams(location.search).get("q");
-loadRegistry().then(()=>{ if(q){ document.getElementById("q").value=q; run(q); } else { run("__none__"); document.getElementById("detail").innerHTML='<div class="empty">Paste an address above or pick a ticker.</div>'; } });
+loadRegistry().then(()=>{ if(q){ document.getElementById("q").value=q; run(q); } else document.getElementById("result").innerHTML='<div class="empty">Paste a contract address above to check it.</div>'; });
 </script>
 </body>
 </html>

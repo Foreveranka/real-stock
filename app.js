@@ -32,10 +32,12 @@ const NETWORKS={
 const NET_KEY=(new URLSearchParams(location.search).get("net")||(function(){try{return localStorage.getItem("rs_net")}catch(e){return null}})()||"base");
 const NET=NETWORKS[NET_KEY]||NETWORKS.base;
 try{ localStorage.setItem("rs_net",NET.key); }catch(e){}
-const SEL={policyId:"0xdb3de624",isAuthorized:"0x55a1179e",oraclePaused:"0x7706ba52",name:"0x06fdde03",symbol:"0x95d89b41",decimals:"0x313ce567",totalSupply:"0x18160ddd",multiplier:"0x1b3ed722",contractURI:"0xe8a3d485",isB20:"0xfa19b927",latestRoundData:"0xfeaf968c",transfer:"0xa9059cbb",balanceOf:"0x70a08231",paused:"0x5c975abb"};
+const SEL={policyId:"0xdb3de624",isAuthorized:"0x55a1179e",policyExists:"0x330f5637",oraclePaused:"0x7706ba52",pausedFeatures:"0xde9997e3",uiMultiplier:"0xa60bf13d",newUIMultiplier:"0xdc767007",effectiveAt:"0x97a4064f",name:"0x06fdde03",symbol:"0x95d89b41",decimals:"0x313ce567",totalSupply:"0x18160ddd",multiplier:"0x1b3ed722",contractURI:"0xe8a3d485",isB20:"0xfa19b927",latestRoundData:"0xfeaf968c",transfer:"0xa9059cbb",balanceOf:"0x70a08231",paused:"0x5c975abb"};
 const POLICY_REGISTRY="0x8453000000000000000000000000000000000002";
 const SCOPE={sender:"b81736c875ab819dd97f59f2a6542cfb731ad52b4ae15a6f24df2fb02b0327f5",receiver:"8a4b3fa2d8b921852bc0089c6ef0958aa6961897be36fd731330fe2cd23f8363",executor:"10be5173aff2a44e748bd9acd8b19fe34689581398a9db7ba2fb671e786ff7d8"};
-const ERRS={"e450d38c":"insufficient balance in the simulated sender","db42144d":"insufficient balance in the simulated sender","c337f8be":"policy forbids this transfer","5b083d28":"policy forbids this transfer","54cfe659":"policy forbids this transfer","d93c0665":"token transfers are paused","e7792495":"token transfers are paused"};
+// Only selectors observed on chain are named. Anything else stays "unknown revert" rather than
+// being attributed to a policy denial we did not actually see.
+const ERRS={"db42144d":"the simulated sender holds none of this token","e450d38c":"the simulated sender holds none of this token"};
 const BEACON_SLOT="0xa3f0ad74e5423aebfd80d3ef4346578335a9a72aeaee59ff6cb3582b35133d50";
 const QUOTES=new Set(["USDC","USDBC","WETH","ETH","USDT","CBBTC","USDG"]);
 const state={rows:{},wallet:null,byAddr:{}};
@@ -68,6 +70,16 @@ async function rpcOn(rpcs,method,params){
   }
 }
 const rpc=(m,p)=>rpcOn(NET.rpcs,m,p);
+// Every network read is bound to the chain it claims to be. A wrong chainId means the
+// answer belongs to a different asset, so it is discarded rather than displayed.
+const CHAIN_HEX={base:"0x2105",robinhood:"0x1237"};
+let chainOk=null;
+async function assertChain(){
+  if(chainOk!==null) return chainOk;
+  try{ const id=await rpc("eth_chainId",[]); chainOk=(id||"").toLowerCase()===CHAIN_HEX[NET.key]; }catch(e){ chainOk=false; }
+  if(!chainOk){ const b=document.getElementById("banner"); if(b){ b.style.display="block"; b.textContent="The RPC for "+NET.label+" did not report the expected chain id, so results are not being shown."; } }
+  return chainOk;
+}
 const pad=(h)=>h.replace(/^0x/,"").padStart(64,"0");
 const call=(to,data,from)=>rpc("eth_call",[Object.assign({to,data},from?{from}:{}),"latest"]);
 const hexToStr=(h)=>{ if(!h||h.length<130) return null; const len=parseInt(h.slice(66,130),16); const hex=h.slice(130,130+len*2); try{ return decodeURIComponent(hex.replace(/(..)/g,"%$1")); }catch(e){ return null; } };
@@ -76,7 +88,7 @@ const short=(a)=>a.slice(0,6)+"..."+a.slice(-4);
 const fmt=(n,d=2)=>n==null?"n/a":Number(n).toLocaleString("en-US",{maximumFractionDigits:d});
 const usd=(n)=>n==null?"n/a":"$"+fmt(n,n<1?4:2);
 const usdBig=(n)=>n==null?"n/a":n>=1e9?"$"+(n/1e9).toFixed(2)+"B":n>=1e6?"$"+(n/1e6).toFixed(2)+"M":n>=1e3?"$"+(n/1e3).toFixed(1)+"K":usd(n);
-const pct=(n)=>n==null?'<span class="note">n/a</span>':'<span class="'+(n>=0?"up":"down")+'">'+(n>0?"+":"")+Number(n).toFixed(2)+"%</span>";
+const pct=(n)=>n==null?'<span class="sub">\u2014</span>':((n>=0?"+":"\u2212")+Math.abs(Number(n)).toFixed(2)+"%");
 const ago=(ts)=>{ if(!ts) return "n/a"; const s=Date.now()/1000-ts; if(s<90) return Math.round(s)+"s"; if(s<5400) return Math.round(s/60)+"m"; if(s<172800) return (s/3600).toFixed(1)+"h"; return (s/86400).toFixed(1)+"d"; };
 const esc=(s)=>String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 async function pool(items,fn,limit=5){ const out=new Array(items.length); let i=0; await Promise.all(Array.from({length:Math.min(limit,items.length)},async()=>{ while(i<items.length){ const k=i++; try{ out[k]=await fn(items[k],k); }catch(e){ out[k]=null; } } })); return out; }
@@ -88,15 +100,24 @@ async function tokenCore(addr){
     call(addr,SEL.symbol).then(hexToStr).catch(()=>null),
     call(addr,SEL.decimals).then(hexToBig).catch(()=>null),
     call(addr,SEL.totalSupply).then(hexToBig).catch(()=>null),
-    call(addr,SEL.multiplier).then(hexToBig).catch(()=>null),
+    (NET.verify==="beacon"?call(addr,SEL.uiMultiplier):call(addr,SEL.multiplier)).then(hexToBig).catch(()=>null),
     NET.verify==="b20"?call(addr,SEL.contractURI).then(hexToStr).catch(()=>null):Promise.resolve(null),
     NET.verify==="b20"?call(NET.factory,SEL.isB20+pad(addr)).then(h=>!!h&&/1$/.test(h)).catch(()=>null):Promise.resolve(null),
     NET.verify==="beacon"?rpc("eth_getStorageAt",[addr,BEACON_SLOT,"latest"]).then(h=>h?"0x"+h.slice(-40):null).catch(()=>null):Promise.resolve(null),
-    NET.verify==="beacon"?call(addr,SEL.paused).then(h=>!!h&&/1$/.test(h)).catch(()=>null):Promise.resolve(null)]);
+    (NET.verify==="beacon"
+      ? call(addr,SEL.paused).then(h=>(h&&h!=="0x")?/1$/.test(h):null).catch(()=>null)
+      : call(addr,SEL.pausedFeatures).then(h=>{ if(!h||h.length<130) return null; const off=parseInt(h.slice(2,66),16)*2+2; const len=parseInt(h.slice(off,off+64),16); return len>0; }).catch(()=>null))]);
+  let pending=null;
+  if(NET.verify==="beacon"){
+    try{
+      const [nm,ef]=await Promise.all([call(addr,SEL.newUIMultiplier).then(hexToBig).catch(()=>null), call(addr,SEL.effectiveAt).then(hexToBig).catch(()=>null)]);
+      if(nm!=null&&mult!=null&&nm!==mult) pending={value:Number(nm)/1e18,effectiveAt:ef!=null?Number(ef):null};
+    }catch(e){}
+  }
   let meta=null; if(uri&&uri.startsWith("data:application/json;base64,")){ try{ meta=JSON.parse(atob(uri.split(",")[1])); }catch(e){} }
   const d=dec==null?null:Number(dec);
   const reg=state.byAddr[addr.toLowerCase()];
-  return {addr,name,symbol,dec:d,supply:sup==null||d==null?null:Number(sup)/10**d,multiplier:mult==null?(reg&&reg.multiplier!=null?reg.multiplier:null):Number(mult)/1e18,uri,meta,isB20:isb,beacon,beaconOk:beacon?beacon.toLowerCase()===(NET.beacon||"").toLowerCase():null,paused,
+  return {addr,name,symbol,dec:d,supply:sup==null||d==null?null:Number(sup)/10**d,multiplier:mult==null?(reg&&reg.multiplier!=null?reg.multiplier:null):Number(mult)/1e18,uri,meta,isB20:isb,beacon,beaconOk:beacon?beacon.toLowerCase()===(NET.beacon||"").toLowerCase():null,paused,pending,
     image:(meta&&typeof meta.image==="string"&&/^https:\/\//.test(meta.image))?meta.image:(reg&&reg.logo?reg.logo:null)};
 }
 async function oracleFeed(feed,rpcs,label){
@@ -156,6 +177,8 @@ async function policyRead(token, wallet, holder){
       const idHex=await call(token,SEL.policyId+scope);
       if(!idHex||idHex==="0x") { out[name]={id:null,ok:null}; continue; }
       const id=BigInt(idHex);
+      const exists=await rpcOn(NET.rpcs,"eth_call",[{to:POLICY_REGISTRY,data:SEL.policyExists+pad("0x"+id.toString(16))},"latest"]).catch(()=>null);
+      if(!exists||!/1$/.test(exists)){ out[name]={id:id.toString(),ok:null,unknownPolicy:true}; continue; }
       const who=name==="sender"?(holder||wallet):wallet;
       const a=await rpcOn(NET.rpcs,"eth_call",[{to:POLICY_REGISTRY,data:SEL.isAuthorized+pad("0x"+id.toString(16))+pad(who)},"latest"]);
       out[name]={id:id.toString(),ok:(a&&/1$/.test(a))?true:false,who};
@@ -194,6 +217,7 @@ async function loadRow(t,light){
   const row={t,core,orc,dx,prem,mcap}; state.rows[t.address.toLowerCase()]=row; return row;
 }
 async function loadAll(onRow){
+  if(!(await assertChain())) return state.rows;
   const toks=await loadRegistry();
   const light=toks.length>20;
   await pool(toks,async t=>{ const r=await loadRow(t,light); if(onRow) onRow(r); return r; },light?6:13);
@@ -206,13 +230,28 @@ function resolve(q){
 function isOfficial(core){ if(!core) return false; if(NET.verify==="b20") return !!(core.isB20&&core.meta&&/metadata\.coinbase\.com/.test(JSON.stringify(core.meta))); return !!core.beaconOk; }
 
 // ---------- ui bits ----------
-const tradeLinks=(t,dx)=>{ if(NET.key==="base") return '<span class="links"><a target="_blank" rel="noopener" href="https://aerodrome.finance/swap?from='+NET.quote+'&to='+t.address+'">Aerodrome</a><a target="_blank" rel="noopener" href="https://app.uniswap.org/swap?chain=base&inputCurrency='+NET.quote+'&outputCurrency='+t.address+'">Uniswap</a></span>';
-  return '<span class="links">'+(dx&&dx.pairUrl?'<a target="_blank" rel="noopener" href="'+esc(dx.pairUrl)+'">Trade ('+esc(dx.venue||"DEX")+')</a>':'')+'<a target="_blank" rel="noopener" href="https://robinscan.io/token/'+t.address+'">Robinscan</a></span>'; };
-const infoLinks=(addr)=>'<span class="links"><a target="_blank" rel="noopener" href="'+NET.explorer+addr+'">'+NET.explorerName+'</a><a target="_blank" rel="noopener" href="https://dexscreener.com/'+NET.dexChain+'/'+addr+'">DexScreener</a></span>';
-const logo=(core,t)=>{ const img=(core&&core.image)||(t&&t.logo); return img?'<img src="'+esc(img)+'" alt="" onerror="this.replaceWith(Object.assign(document.createElement(\'div\'),{className:\'ph\',textContent:\''+esc(((t?t.symbol:core&&core.symbol)||"?").replace(/c$/,"").slice(0,4))+'\'}))">':'<div class="ph">'+esc(((t?t.symbol:core&&core.symbol)||"?").replace(/c$/,"").slice(0,4))+'</div>'; };
+const ICON={
+  pass:'<svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 8.5 6.5 12 13 4.5"/></svg>',
+  fail:'<svg class="ic warnv" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 4l8 8M12 4l-8 8"/></svg>',
+  unk:'<svg class="ic warnv" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M5.5 5.5a2.5 2.5 0 1 1 3 2.4V10"/><path d="M8.5 12.6h.01"/></svg>',
+  pend:'<svg class="ic spin" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8 1.6a6.4 6.4 0 1 1-6.4 6.4" stroke-linecap="round"/></svg>',
+  big:{pass:'<svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square"><path d="M6 17l7 7 13-15"/></svg>',
+       fail:'<svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" class="warnv"><path d="M8 8l16 16M24 8L8 24"/></svg>',
+       unk:'<svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" class="warnv"><path d="M11 11a5 5 0 1 1 6 4.9V20"/><path d="M17 26h.01"/></svg>'}
+};
+const LOGO='<svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true"><path d="M3 10V3H10 M22 29H29V22"/><path d="M11 24V8H17C21 8 23 10 23 14S21 20 17 20H11 M17 20L23 24"/></svg>';
+const tradeLinks=(t,dx)=>{ if(NET.key==="base") return '<a target="_blank" rel="noopener" href="https://aerodrome.finance/swap?from='+NET.quote+'&to='+t.address+'">Trade on Aerodrome</a>';
+  return dx&&dx.pairUrl?'<a target="_blank" rel="noopener" href="'+esc(dx.pairUrl)+'">Trade on '+esc(dx.venue||"DEX")+'</a>':''; };
+const infoLinks=(addr)=>'<a target="_blank" rel="noopener" href="'+NET.explorer+addr+'">'+NET.explorerName+'</a> <a target="_blank" rel="noopener" href="https://dexscreener.com/'+NET.dexChain+'/'+addr+'">DexScreener</a>';
+const logo=(core,t)=>{ const img=(core&&core.image)||(t&&t.logo); const fb=esc((((t?t.symbol:core&&core.symbol)||"?")+"").replace(/c$/,"").slice(0,4));
+  return img?'<img src="'+esc(img)+'" alt="" onerror="this.replaceWith(Object.assign(document.createElement(\'div\'),{className:\'ph\',textContent:\''+fb+'\'}))">':'<div class="ph">'+fb+'</div>'; };
 const tokenCell=(core,t)=>'<div class="tk">'+logo(core,t)+'<div><b>'+esc(t?t.symbol:core.symbol||"?")+'</b><small>'+esc((core&&core.name)||(t?t.name:""))+'</small></div></div>';
-function chk(status,title,desc){ const ic=status==="ok"?"OK":status==="bad"?"X":status==="warn"?"!":"?"; const cls=status==="ok"?"ok":status==="bad"?"bad":status==="warn"?"warn":"mut"; return '<div class="chk"><div class="ic '+cls+'">'+ic+'</div><div><div class="t">'+title+'</div><div class="d">'+(desc||"")+'</div></div></div>'; }
-
+// One evidence row: number, name, result text with icon, supporting detail.
+function evrow(n,status,title,result,detail){
+  const ic=status==="pass"?ICON.pass:status==="fail"?ICON.fail:status==="pending"?ICON.pend:ICON.unk;
+  const cls=(status==="fail"||status==="unknown")?" warnv":"";
+  return '<div class="evrow"><div class="n">'+String(n).padStart(2,"0")+'</div><div><div class="t">'+title+'</div>'+(detail?'<div class="d">'+detail+'</div>':'')+'</div><div class="r'+cls+'">'+esc(result)+ic+'</div></div>';
+}
 // ---------- market hours (NYSE, ignores holidays) ----------
 function marketStatus(){
   const now=new Date(); const et=new Date(now.toLocaleString("en-US",{timeZone:"America/New_York"}));
@@ -224,10 +263,7 @@ function marketStatus(){
   const diff=Math.max(0,next-et); const h=Math.floor(diff/3600000), m=Math.floor(diff%3600000/60000);
   return {open,label:open?"US market open, closes in "+h+"h "+m+"m":"US market closed, opens in "+h+"h "+m+"m"};
 }
-function paintMarket(){
-  const s=marketStatus(); const d=document.querySelector("#mkt .dot"); if(d){ d.className="dot "+(s.open?"on":"off"); document.getElementById("mkt_t").textContent=s.label; }
-  const b=document.getElementById("banner"); if(b){ if(!s.open){ b.style.display="block"; b.textContent="The US regular session is closed. These Chainlink feeds cover extended and overnight sessions 24/5 and stop over the weekend, so a reference may still be recent or may be hours old. Every price below carries the age of the reference it is measured against."; } else b.style.display="none"; }
-}
+function sessionNote(){ const s=marketStatus(); return s.open?"US regular session open":"US regular session closed, feeds run 24/5"; }
 
 // ---------- wallet ----------
 async function connectWallet(){
@@ -246,12 +282,14 @@ async function restoreWallet(){
 function withNet(href){ const u=new URL(href,location.href); u.searchParams.set("net",NET.key); return u.pathname.split("/").pop()+u.search; }
 function mountNav(active){
   const el=document.getElementById("nav"); if(!el) return;
-  const links=[["index.html","Check"],["stocks.html","Stocks"],["portfolio.html","Portfolio"]];
-  const opts=Object.values(NETWORKS).map(n=>'<option value="'+n.key+'"'+(n.key===NET.key?' selected':'')+'>'+n.label+' ('+n.issuer+')</option>').join("");
-  el.innerHTML='<a class="brand" href="'+withNet("index.html")+'"><div class="logo">R</div><b>Real Stock</b></a><div class="menu">'+links.map(l=>'<a href="'+withNet(l[0])+'"'+(l[0]===active?' class="on"':"")+'>'+l[1]+'</a>').join("")+'</div><div class="right"><select id="netsel" class="sel">'+opts+'</select><div class="pill" id="mkt"><span class="dot"></span><span id="mkt_t">Checking market hours</span></div><button class="btn sec" id="connect">Connect wallet</button></div>';
+  const links=[["index.html","Check"],["stocks.html","Tokens"],["portfolio.html","Portfolio"]];
+  const segs=Object.values(NETWORKS).map(n=>'<button data-net="'+n.key+'"'+(n.key===NET.key?' class="on"':'')+'>'+n.label+'</button>').join("");
+  el.className="top";
+  el.innerHTML='<a class="brand" href="'+withNet("index.html")+'">'+LOGO+'<b>Real Stock</b></a>'
+    +'<nav class="nav">'+links.map(l=>'<a href="'+withNet(l[0])+'"'+(l[0]===active?' class="on"':"")+'>'+l[1]+'</a>').join("")+'</nav>'
+    +'<div class="hright"><div class="seg">'+segs+'</div><button class="linkbtn" id="connect">Connect wallet</button></div>';
   document.getElementById("connect").onclick=connectWallet;
-  document.getElementById("netsel").onchange=(e)=>{ try{ localStorage.setItem("rs_net",e.target.value); }catch(x){} const u=new URL(location.href); u.searchParams.set("net",e.target.value); u.searchParams.delete("q"); location.href=u.toString(); };
-  document.querySelectorAll("a[data-net]").forEach(a=>a.href=withNet(a.getAttribute("href")));
-  paintMarket(); setInterval(paintMarket,30000); restoreWallet();
+  el.querySelectorAll(".seg button").forEach(b=>b.onclick=()=>{ const k=b.dataset.net; if(k===NET.key) return; try{ localStorage.setItem("rs_net",k); }catch(x){} const u=new URL(location.href); u.searchParams.set("net",k); u.searchParams.delete("q"); location.href=u.toString(); });
+  restoreWallet();
 }
-function mountFooter(){ const f=document.getElementById("foot"); if(f) f.innerHTML='Data read live from '+esc(NET.label)+' RPC and DexScreener, directly in your browser. No backend, no keys. '+(NET.key==="base"?'Canonical list from base.org/stocks and docs.base.org. B20 precompiles, B20Factory and Chainlink feeds on Base.':'Canonical list from Robinhood\'s asset registry (api.robinhood.com/rhj/assets, snapshot '+esc(NET.fetchedAt||"")+') and docs.robinhood.com/chain/contracts. Reference prices use the Chainlink feed of the same underlying on Base.')+' Tokenized stocks are available only in eligible jurisdictions outside the US. Market hours ignore exchange holidays. Informational only, not investment advice.'; }
+function mountFooter(){ const f=document.getElementById("foot"); if(f){ f.className="foot"; f.innerHTML='Data read live from '+esc(NET.label)+' RPC and DexScreener, directly in your browser. No backend, no keys. '+(NET.key==="base"?'Canonical list from base.org/stocks and docs.base.org. B20 precompiles, B20Factory and Chainlink feeds on Base.':'Canonical list from Robinhood\'s asset registry (api.robinhood.com/rhj/assets, snapshot '+esc(NET.fetchedAt||"")+') and docs.robinhood.com/chain/contracts. Reference prices use the Chainlink feed of the same underlying on Base.')+' Tokenized stocks are available only in eligible jurisdictions outside the US. Market hours ignore exchange holidays. Informational only, not investment advice.'; } }
