@@ -71,6 +71,10 @@ python3 -m http.server 8934
 
 Then open `http://localhost:8934/`.
 
+## Machine readable directory
+
+`data/directory.json` is the verified instrument directory in one versioned file: both issuers, every published token, the underlying, the reference feed address where one exists, and the source each entry came from with its capture date. Membership in that file is what makes a token issuer issued. Fingerprints and metadata are corroboration, and absence means not found in the issuer source at capture time, not proof of fraud.
+
 ## Sources
 
 - Coinbase tokenized stocks on Base: base.org/stocks, docs.base.org

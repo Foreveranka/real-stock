@@ -135,8 +135,15 @@ async function run(input){
   const good=orc&&!orc.error&&orc.price>0;
   const evs=[
     [reg?"pass":"fail","Issuer list membership",reg?"Listed":"Not listed",reg?(NET.issuer+" publishes this address"+(NET.fetchedAt?", snapshot "+esc(NET.fetchedAt):"")+(reg.chainId?", chain "+reg.chainId:"")):"Checked against "+NET.listName],
-    [fpOk?"pass":"unknown","Contract fingerprint",fpOk?"Matches":"No match",NET.verify==="b20"?"B20Factory recognises this token. The factory is open to anyone, so this alone does not identify the issuer.":(core.beacon?"Beacon slot "+core.beacon:"No beacon slot found")],
-    [metaOk?"pass":"unknown","Name and metadata",metaOk?"Consistent":"Inconsistent",NET.verify==="b20"?(mh?"Metadata host resolves to "+esc(mh)+". Corroboration only, a URL can be copied.":"No parseable https metadata host"):esc(core.name||"no name")],
+    [fpOk?"pass":"unknown","Contract fingerprint",fpOk?"Matches":"No match",
+      NET.verify==="b20"
+        ? (fpOk?"B20Factory recognises this token. The factory is open to anyone, so this alone does not identify the issuer."
+              :"B20Factory does not recognise this address. Coinbase's tokens are always B20, so this is not one of them.")
+        : (core.beaconOk?"Beacon slot "+core.beacon+", the same beacon behind every official Robinhood Stock Token."
+              :(core.beacon&&/[1-9a-f]/.test(core.beacon.slice(2))?"Beacon slot "+core.beacon+", which is not Robinhood's beacon.":"No beacon slot, so this is not a Robinhood proxy."))],
+    [metaOk?"pass":"unknown","Name and metadata",metaOk?"Consistent":(core.name?"Inconsistent":"Unreadable"),
+      NET.verify==="b20"?(mh?"Metadata host resolves to "+esc(mh)+". Corroboration only, a URL can be copied.":(core.uri?"No parseable https metadata host.":"This address exposes no contractURI, which can mean an unavailable metadata source rather than a fake."))
+                        :(core.name?esc(core.name):"This address exposes no name.")],
     [mult==null?"unknown":(pend?"unknown":"pass"),"Corporate action multiplier",mult==null?"Unreadable":mult.toFixed(6),mult==null?"This token does not expose a multiplier":"Read onchain. The reference feed already includes it."+(pend?" A change to "+pend.value.toFixed(6)+" is pending.":"")],
     [usable?"pass":"unknown","Reference price",good?usd(orc.price):"Unavailable",good?("Updated "+ago(orc.updatedAt)+" ago from the "+esc(orc.source)+(orc.paused?". The feed is paused, which happens during corporate actions.":"")):"No Chainlink feed published for this token"],
     [dx.price?"pass":"unknown","Market price",dx.price?usd(dx.price):"No pool",dx.price?("Deepest pool on "+esc(dx.venue)+" against "+esc(dx.quote)+", "+usdBig(dx.liq)+" reported liquidity"):"Nothing tradable found on "+esc(NET.label)],
