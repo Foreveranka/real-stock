@@ -252,6 +252,30 @@ function evrow(n,status,title,result,detail){
   const cls=(status==="fail"||status==="unknown")?" warnv":"";
   return '<div class="evrow"><div class="n">'+String(n).padStart(2,"0")+'</div><div><div class="t">'+title+'</div>'+(detail?'<div class="d">'+detail+'</div>':'')+'</div><div class="r'+cls+'">'+esc(result)+ic+'</div></div>';
 }
+
+// ---------- trade preparation (Base only, USDC in, one venue) ----------
+// A size specific quote from the KyberSwap aggregator. This is an estimate for the route it
+// returns at this moment, not a wallet swap simulation and not a promise of execution.
+const QUOTE={venue:"KyberSwap aggregator",supported:()=>NET.key==="base"};
+async function quote(tokenOut,usdcAmount,decimals){
+  if(!QUOTE.supported()) return {error:"Quotes are available on Base only."};
+  const amt=Math.round(usdcAmount*1e6);
+  if(!(amt>0)) return {error:"Enter an amount."};
+  try{
+    const u="https://aggregator-api.kyberswap.com/base/api/v1/routes?tokenIn="+NET.quote+"&tokenOut="+tokenOut+"&amountIn="+amt;
+    const r=await fetch(u); const j=await r.json();
+    const s=j&&j.data&&j.data.routeSummary;
+    if(!s||!s.amountOut||s.amountOut==="0") return {error:"No route found for this size."};
+    const out=Number(s.amountOut)/10**(decimals||8);
+    if(!(out>0)) return {error:"No route found for this size."};
+    const effective=usdcAmount/out;
+    const inUsd=Number(s.amountInUsd)||usdcAmount, outUsd=Number(s.amountOutUsd)||null;
+    const routeCost=outUsd?((outUsd-inUsd)/inUsd)*100:null;
+    return {out,effective,routeCost,gasUsd:Number(s.gasUsd)||null,at:Date.now()};
+  }catch(e){ return {error:"Quote unavailable right now."}; }
+}
+const venueUrl=(tokenOut)=>"https://kyberswap.com/swap/base/"+NET.quote+"-to-"+tokenOut;
+
 // ---------- market hours (NYSE, ignores holidays) ----------
 function marketStatus(){
   const now=new Date(); const et=new Date(now.toLocaleString("en-US",{timeZone:"America/New_York"}));

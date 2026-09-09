@@ -39,6 +39,8 @@ function shell(addr,reg,core){
     +'<section class="block" id="vblock"><p class="eyebrow">Issuer check</p><div class="vhead"><div id="vicon" style="width:32px"></div><div><p class="verdict" id="vtext">Checking issuer…</p><p class="sub" id="vwhy" style="margin:12px 0 0;max-width:640px"></p></div></div></section>'
     +'<section class="cols"><div><p class="eyebrow">Market / reference</p><div id="pricebox"><div class="value"><span class="sk" style="width:140px"></span></div></div></div>'
     +'<div><p class="eyebrow">Wallet receipt</p><div id="recbox"><p class="section" style="font-size:24px;margin:0">Checking…</p></div></div></section>'
+    +'<div id="recovery"></div>'
+    +'<section id="tradebox"></section>'
     +'<details class="ev" id="evd"><summary>Inspect 8 onchain checks</summary><div id="evrows"></div></details>'
     +'<div class="meta" style="margin-top:20px" id="footmeta"></div>';
 }
@@ -69,6 +71,21 @@ async function run(input){
     vw.textContent="This address is on "+NET.issuer+"'s published list"+(reg.isin?", ISIN "+reg.isin:"")+", and the contract fingerprint agrees."; }
   else { vt.textContent="Not on the issuer list"; vi.innerHTML=ICON.big.fail;
     vw.textContent=NET.issuer+" does not publish this address"+(target?", and it copies the ticker of "+target.symbol:"")+". That means it is not an issuer token, not that it is proven fraudulent."; }
+
+  // official token recovery. No fuzzy ticker mapping: only suggest an issuer token whose company
+  // name or ticker appears as a whole word in the candidate's own name or symbol.
+  const rec=document.getElementById("recovery");
+  const hay=((core.name||"")+" "+(core.symbol||"")).toLowerCase();
+  const word=(w)=>new RegExp("(^|[^a-z0-9])"+w.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g,"\\$&")+"([^a-z0-9]|$)").test(hay);
+  const suggestions=reg?[]:(NET.tokens||[]).filter(t=>{
+    const first=(t.name||"").split(/\s+/)[0];
+    return (first&&first.length>2&&word(first))||word((t.root||t.symbol).replace(/c$/,""));
+  }).slice(0,2);
+  if(!reg&&suggestions.length){
+    rec.innerHTML='<div style="border-bottom:1px solid var(--rule);padding:20px 0;display:flex;gap:20px;align-items:center;flex-wrap:wrap">'
+      +'<div><div class="eyebrow" style="margin:0 0 6px">Did you mean</div><div class="small">'+NET.issuer+' issues '+suggestions.map(t=>esc(t.name)).join(" and ")+' at a different address.</div></div>'
+      +'<div style="margin-left:auto;display:flex;gap:10px">'+suggestions.map(t=>'<a class="btn sm" href="'+withNet("check.html?q="+t.address)+'">Check '+esc(t.symbol)+'</a>').join("")+'</div></div>';
+  } else rec.innerHTML="";
 
   // price column
   const pb=document.getElementById("pricebox");
@@ -123,6 +140,34 @@ async function run(input){
   ];
   rows.innerHTML=evs.map((e,i)=>evrow(i+1,e[0],e[1],e[2],e[3])).join("");
   if(evs.some(e=>e[0]==="fail")||!reg) document.getElementById("evd").open=true;
+
+  // trade preparation: a size specific quote for issuer listed tokens on Base
+  const tb=document.getElementById("tradebox");
+  if(reg&&QUOTE.supported()&&dx.price){
+    tb.innerHTML='<div style="border-bottom:1px solid var(--rule);padding:24px 0">'
+      +'<p class="eyebrow">Buy preview</p>'
+      +'<div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap">'
+      +'<div><label class="lbl" for="amt">USDC amount</label><div class="field" style="width:220px"><input id="amt" value="500" inputmode="decimal" style="border-right:1px solid var(--rule);border-radius:4px;height:44px"></div></div>'
+      +'<button class="btn sm" id="qbtn" style="height:44px">Get quote</button>'
+      +'<a class="linkbtn" id="venue" href="'+venueUrl(addr)+'" target="_blank" rel="noopener" style="margin-left:auto">Continue on '+QUOTE.venue.split(" ")[0]+'</a>'
+      +'</div><div id="qout" style="margin-top:16px" aria-live="polite"></div></div>';
+    const run=async()=>{
+      const v=parseFloat(document.getElementById("amt").value);
+      const out=document.getElementById("qout");
+      out.innerHTML='<span class="sk" style="width:200px"></span>';
+      const q=await quote(addr,v,core.dec);
+      if(q.error){ out.innerHTML='<div class="small warnv">'+esc(q.error)+'</div>'; return; }
+      const dev=good?((q.effective/orc.price-1)*100):null;
+      out.innerHTML='<div class="value">'+fmt(q.out,6)+' <span class="small sub">'+esc(core.symbol||"")+'</span></div>'
+        +'<div class="small" style="margin-top:8px">Effective '+usd(q.effective)+' per token at this size'
+        +(dev!=null?', '+(dev>=0?"+":"\u2212")+Math.abs(dev).toFixed(2)+'% versus the reference':'')+'</div>'
+        +'<div class="small sub" style="margin-top:4px">'+(q.routeCost!=null?'Route cost '+(q.routeCost>=0?"+":"\u2212")+Math.abs(q.routeCost).toFixed(2)+'% of input value':'')+(q.gasUsd?' · gas about '+usd(q.gasUsd):'')+'</div>'
+        +'<div class="small sub" style="margin-top:4px">Quote estimate from the '+QUOTE.venue+' at '+new Date(q.at).toISOString().slice(11,16)+' UTC. Reference deviation and route cost measure different things. The venue may pick another route and will refresh the price.</div>';
+    };
+    document.getElementById("qbtn").onclick=run;
+    document.getElementById("amt").addEventListener("keydown",e=>{ if(e.key==="Enter"){ e.preventDefault(); run(); }});
+    run();
+  } else tb.innerHTML="";
 
   document.getElementById("footmeta").innerHTML="Checked "+new Date().toISOString().slice(0,16).replace("T"," ")+" UTC · token "+addr+(reg&&reg.feed?" · feed "+reg.feed:"")+(dx.pairAddress?" · pool "+dx.pairAddress:"")+" · "+infoLinks(addr)+(dx.price?" "+tradeLinks(reg||{address:addr},dx):"");
 }
