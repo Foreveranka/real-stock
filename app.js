@@ -120,17 +120,27 @@ async function tokenCore(addr){
   return {addr,name,symbol,dec:d,supply:sup==null||d==null?null:Number(sup)/10**d,multiplier:mult==null?(reg&&reg.multiplier!=null?reg.multiplier:null):Number(mult)/1e18,uri,meta,isB20:isb,beacon,beaconOk:beacon?beacon.toLowerCase()===(NET.beacon||"").toLowerCase():null,paused,pending,
     image:(meta&&typeof meta.image==="string"&&/^https:\/\//.test(meta.image))?meta.image:(reg&&reg.logo?reg.logo:null)};
 }
+const FEED_DEC={};
 async function oracleFeed(feed,rpcs,label){
   if(!feed) return null;
+  const rl=rpcs||NET.rpcs;
   try{
-    const h=await rpcOn(rpcs||NET.rpcs,"eth_call",[{to:feed,data:SEL.latestRoundData},"latest"]);
+    // Feed decimals are read from the feed itself. The input token's decimals, the output
+    // token's decimals and the feed's decimals are independent, so none of them is assumed.
+    if(FEED_DEC[feed]===undefined){
+      const d=await rpcOn(rl,"eth_call",[{to:feed,data:SEL.decimals},"latest"]).catch(()=>null);
+      FEED_DEC[feed]=(d&&d!=="0x")?Number(BigInt(d)):null;
+    }
+    const fd=FEED_DEC[feed];
+    if(fd==null) return {error:"feed decimals unreadable"};
+    const h=await rpcOn(rl,"eth_call",[{to:feed,data:SEL.latestRoundData},"latest"]);
     if(!h||h.length<2+64*5) return null;
     const raw=BigInt("0x"+h.slice(2+64,2+128));
     const upd=parseInt(h.slice(2+64*3,2+64*4),16);
     if(raw<=0n||!upd) return {error:"feed returned no usable value"};
     let paused=null;
-    try{ const p=await rpcOn(rpcs||NET.rpcs,"eth_call",[{to:feed,data:SEL.oraclePaused},"latest"]); if(p&&p!=="0x") paused=/1$/.test(p); }catch(e){}
-    return {price:Number(raw)/1e8,updatedAt:upd,paused,source:label||NET.feedNote};
+    try{ const p=await rpcOn(rl,"eth_call",[{to:feed,data:SEL.oraclePaused},"latest"]); if(p&&p!=="0x") paused=/1$/.test(p); }catch(e){}
+    return {price:Number(raw)/10**fd,decimals:fd,updatedAt:upd,paused,source:label||NET.feedNote};
   }catch(e){ return {error:"feed read failed"}; }
 }
 async function dex(addr){
