@@ -12,12 +12,14 @@ Built for the Base Builder Quest (Tokenized Stocks), September 2026.
 
 ## Why
 
-In the week before this was built, two memecoins paired with tokenized stock tokens moved real Nasdaq prices.
+Memecoins are being launched in liquidity pairs with tokenized stock tokens. Two happened in the week before this was built, and they were not the same kind of thing at all.
 
-- **Farmmi (FAMI)** was paired with a *fake* FAMI stock token. The Nasdaq stock traded 867 million shares in a day, 74 times its 20 day average.
-- **AMC** was paired with the *real* Robinhood AMC Stock Token. That memecoin went from a $350k market cap to $162M in four hours while the AMC and Robinhood CEOs argued publicly.
+- One was paired with a stock token that **no issuer had published**, an independently deployed contract carrying a real ticker.
+- The other was paired with the **genuine issuer token** for the same style of asset.
 
-Telling those two situations apart by hand took twenty minutes of RPC calls. This page does it from one pasted address.
+From the outside the two look identical: same ticker, same kind of pool, same chain. Telling them apart by hand took twenty minutes of RPC calls. This page does it from one pasted address, and shows the evidence rather than a badge.
+
+The observed market activity around those events is reported elsewhere; this project makes no claim about what caused it.
 
 ## What it checks
 
