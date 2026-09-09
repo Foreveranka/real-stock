@@ -256,25 +256,31 @@ function evrow(n,status,title,result,detail){
 // ---------- trade preparation (Base only, USDC in, one venue) ----------
 // A size specific quote from the KyberSwap aggregator. This is an estimate for the route it
 // returns at this moment, not a wallet swap simulation and not a promise of execution.
-const QUOTE={venue:"KyberSwap aggregator",supported:()=>NET.key==="base"};
+const QUOTE={venue:"KyberSwap",supported:()=>NET.key==="base",staleAfter:10};
+// A size specific quote for the currently requested input. The result carries the key of the
+// request that produced it, so a late response can never populate a screen asking something else.
 async function quote(tokenOut,usdcAmount,decimals){
   if(!QUOTE.supported()) return {error:"Quotes are available on Base only."};
+  if(decimals==null) return {error:"Token decimals unavailable, no quote."};
   const amt=Math.round(usdcAmount*1e6);
   if(!(amt>0)) return {error:"Enter an amount."};
+  const key=[NET.key,NET.quote.toLowerCase(),tokenOut.toLowerCase(),amt].join("|");
   try{
     const u="https://aggregator-api.kyberswap.com/base/api/v1/routes?tokenIn="+NET.quote+"&tokenOut="+tokenOut+"&amountIn="+amt;
     const r=await fetch(u); const j=await r.json();
-    const s=j&&j.data&&j.data.routeSummary;
-    if(!s||!s.amountOut||s.amountOut==="0") return {error:"No route found for this size."};
-    const out=Number(s.amountOut)/10**(decimals||8);
-    if(!(out>0)) return {error:"No route found for this size."};
-    const effective=usdcAmount/out;
-    const inUsd=Number(s.amountInUsd)||usdcAmount, outUsd=Number(s.amountOutUsd)||null;
-    const routeCost=outUsd?((outUsd-inUsd)/inUsd)*100:null;
-    return {out,effective,routeCost,gasUsd:Number(s.gasUsd)||null,at:Date.now()};
-  }catch(e){ return {error:"Quote unavailable right now."}; }
+    const sum=j&&j.data&&j.data.routeSummary;
+    if(!sum||!sum.amountOut||sum.amountOut==="0") return {key,error:"No route found for this size."};
+    // Totals only. Never average hops or sum intermediate outputs; the route may span several sources.
+    const outRaw=BigInt(sum.amountOut), inRaw=BigInt(sum.amountIn||String(amt));
+    const out=Number(outRaw)/10**decimals;
+    const inUsdc=Number(inRaw)/1e6;
+    if(!(out>0)) return {key,error:"No route found for this size."};
+    return {key,out,perToken:inUsdc/out,gasUsd:Number(sum.gasUsd)||null,at:Date.now()};
+  }catch(e){ return {key,error:"Quote unavailable right now."}; }
 }
 const venueUrl=(tokenOut)=>"https://kyberswap.com/swap/base/"+NET.quote+"-to-"+tokenOut;
+// A reference is usable for comparison only when it is live and recent.
+const refUsable=(orc)=>!!(orc&&!orc.error&&orc.price>0&&!orc.paused&&(Date.now()/1000-orc.updatedAt)<3*3600);
 
 // ---------- market hours (NYSE, ignores holidays) ----------
 function marketStatus(){

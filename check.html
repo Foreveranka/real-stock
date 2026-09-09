@@ -89,13 +89,18 @@ async function run(input){
 
   // price column
   const pb=document.getElementById("pricebox");
+  const usable=refUsable(orc);
   if(dx.price){
     pb.innerHTML='<div class="value">'+usd(dx.price)+'</div>'
-      +'<div class="small" style="margin-top:8px">'+(orc&&!orc.error&&orc.price>0?'Reference '+usd(orc.price)+' <span class="sub">as of '+ago(orc.updatedAt)+' ago'+(orc.paused?', feed paused':'')+'</span>':'<span class="warnv">Reference unavailable</span>')+'</div>'
-      +(prem!=null?'<div class="small" style="margin-top:4px">'+(prem>=0?"+":"−")+Math.abs(prem).toFixed(2)+'% versus reference</div>':'')
+      +'<div class="small" style="margin-top:8px">'+(orc&&!orc.error&&orc.price>0
+          ? 'Reference '+usd(orc.price)+' <span class="sub">as of '+ago(orc.updatedAt)+' ago'+(orc.paused?', feed paused':'')+'</span>'
+          : '<span class="warnv">Reference unavailable</span>')+'</div>'
+      +(usable&&prem!=null
+          ? '<div class="small" style="margin-top:4px">'+(prem>=0?"+":"\u2212")+Math.abs(prem).toFixed(2)+'% versus reference</div>'
+          : (orc&&orc.price>0?'<div class="small warnv" style="margin-top:4px">No comparison shown: the reference is '+(orc.paused?"paused":"older than three hours")+'.</div>':''))
       +'<div class="small sub" style="margin-top:4px">'+(dx.liq?usdBig(dx.liq)+' reported liquidity on '+esc(dx.venue):'no pool')+' · '+sessionNote()+'</div>';
   } else {
-    pb.innerHTML='<div class="value sub">—</div><div class="small sub" style="margin-top:8px">'+(dx.quoteOnly?"This token only appears as the quote side of a pair, so no independent price can be read.":"No liquidity pool found on "+esc(NET.label))+'</div>';
+    pb.innerHTML='<div class="value sub">\u2014</div><div class="small sub" style="margin-top:8px">'+(dx.quoteOnly?"This token only appears as the quote side of a pair, so no independent price can be read.":"No liquidity pool found on "+esc(NET.label))+'</div>';
   }
 
   const [likes,pol,pr]=await Promise.all([
@@ -133,7 +138,7 @@ async function run(input){
     [fpOk?"pass":"unknown","Contract fingerprint",fpOk?"Matches":"No match",NET.verify==="b20"?"B20Factory recognises this token. The factory is open to anyone, so this alone does not identify the issuer.":(core.beacon?"Beacon slot "+core.beacon:"No beacon slot found")],
     [metaOk?"pass":"unknown","Name and metadata",metaOk?"Consistent":"Inconsistent",NET.verify==="b20"?(mh?"Metadata host resolves to "+esc(mh)+". Corroboration only, a URL can be copied.":"No parseable https metadata host"):esc(core.name||"no name")],
     [mult==null?"unknown":(pend?"unknown":"pass"),"Corporate action multiplier",mult==null?"Unreadable":mult.toFixed(6),mult==null?"This token does not expose a multiplier":"Read onchain. The reference feed already includes it."+(pend?" A change to "+pend.value.toFixed(6)+" is pending.":"")],
-    [good?(Date.now()/1000-orc.updatedAt<3*3600?"pass":"unknown"):"unknown","Reference price",good?usd(orc.price):"Unavailable",good?("Updated "+ago(orc.updatedAt)+" ago from the "+esc(orc.source)+(orc.paused?". The feed is paused, which happens during corporate actions.":"")):"No Chainlink feed published for this token"],
+    [usable?"pass":"unknown","Reference price",good?usd(orc.price):"Unavailable",good?("Updated "+ago(orc.updatedAt)+" ago from the "+esc(orc.source)+(orc.paused?". The feed is paused, which happens during corporate actions.":"")):"No Chainlink feed published for this token"],
     [dx.price?"pass":"unknown","Market price",dx.price?usd(dx.price):"No pool",dx.price?("Deepest pool on "+esc(dx.venue)+" against "+esc(dx.quote)+", "+usdBig(dx.liq)+" reported liquidity"):"Nothing tradable found on "+esc(NET.label)],
     [!state.wallet?"unknown":(document.querySelector("#recbox .warnv")?"fail":"pass"),"Transfer policy",!state.wallet?"Not tested":(document.querySelector("#recbox .warnv")?"Attention":"Passed"),!state.wallet?"Connect a wallet to read the policy registry":"Read from the policy registry and confirmed by simulation"],
     [likes.length?"unknown":"pass","Look alike tokens",likes.length?String(likes.length)+" found":"None found",likes.length?likes.map(l=>'<a href="'+withNet("check.html?q="+l.addr)+'">'+esc(l.symbol)+'</a> '+usdBig(l.liq)).join(" · "):"DexScreener returns no other token using this name or ticker on "+esc(NET.label)]
@@ -149,22 +154,41 @@ async function run(input){
       +'<div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap">'
       +'<div><label class="lbl" for="amt">USDC amount</label><div class="field" style="width:220px"><input id="amt" value="500" inputmode="decimal" style="border-right:1px solid var(--rule);border-radius:4px;height:44px"></div></div>'
       +'<button class="btn sm" id="qbtn" style="height:44px">Get quote</button>'
-      +'<a class="linkbtn" id="venue" href="'+venueUrl(addr)+'" target="_blank" rel="noopener" style="margin-left:auto">Continue on '+QUOTE.venue.split(" ")[0]+'</a>'
+      +'<a class="linkbtn" id="venue" href="'+venueUrl(addr)+'" target="_blank" rel="noopener" style="margin-left:auto">Open '+QUOTE.venue+' for a fresh quote</a>'
       +'</div><div id="qout" style="margin-top:16px" aria-live="polite"></div></div>';
-    const run=async()=>{
-      const v=parseFloat(document.getElementById("amt").value);
-      const out=document.getElementById("qout");
-      out.innerHTML='<span class="sk" style="width:200px"></span>';
-      const q=await quote(addr,v,core.dec);
-      if(q.error){ out.innerHTML='<div class="small warnv">'+esc(q.error)+'</div>'; return; }
-      const dev=good?((q.effective/orc.price-1)*100):null;
-      out.innerHTML='<div class="value">'+fmt(q.out,6)+' <span class="small sub">'+esc(core.symbol||"")+'</span></div>'
-        +'<div class="small" style="margin-top:8px">Effective '+usd(q.effective)+' per token at this size'
+
+    let live=null, tick=null;
+    const out=()=>document.getElementById("qout");
+    const wantKey=()=>{ const v=parseFloat(document.getElementById("amt").value); const amt=Math.round((v||0)*1e6);
+      return [NET.key,NET.quote.toLowerCase(),addr.toLowerCase(),amt].join("|"); };
+    function paint(){
+      if(!live){ return; }
+      const age=Math.round((Date.now()-live.at)/1000);
+      const stale=age>QUOTE.staleAfter;
+      const usable=refUsable(orc);
+      const dev=usable?((live.perToken/orc.price-1)*100):null;
+      out().innerHTML='<div class="value'+(stale?' sub':'')+'">'+fmt(live.out,6)+' <span class="small sub">'+esc(core.symbol||"")+'</span></div>'
+        +'<div class="small" style="margin-top:8px">'+fmt(live.perToken,2)+' USDC per '+esc(core.symbol||"token")+' at this size'
         +(dev!=null?', '+(dev>=0?"+":"\u2212")+Math.abs(dev).toFixed(2)+'% versus the reference':'')+'</div>'
-        +'<div class="small sub" style="margin-top:4px">'+(q.routeCost!=null?'Route cost '+(q.routeCost>=0?"+":"\u2212")+Math.abs(q.routeCost).toFixed(2)+'% of input value':'')+(q.gasUsd?' · gas about '+usd(q.gasUsd):'')+'</div>'
-        +'<div class="small sub" style="margin-top:4px">Quote estimate from the '+QUOTE.venue+' at '+new Date(q.at).toISOString().slice(11,16)+' UTC. Reference deviation and route cost measure different things. The venue may pick another route and will refresh the price.</div>';
-    };
+        +(dev==null?'<div class="small warnv" style="margin-top:4px">Reference '+(orc&&orc.price>0?"is "+(orc.paused?"paused":"older than three hours")+", so no comparison is shown":"unavailable")+'.</div>':'<div class="small sub" style="margin-top:4px">Comparison assumes 1 USDC = $1.</div>')
+        +(live.gasUsd?'<div class="small sub" style="margin-top:4px">Estimated swap gas '+usd(live.gasUsd)+', excluding any token approval.</div>':'')
+        +'<div class="small '+(stale?"warnv":"sub")+'" style="margin-top:4px">'+(stale
+            ? 'Previous estimate, '+age+'s old. Refresh the quote before acting on it.'
+            : 'Quoted by '+QUOTE.venue+' '+age+'s ago for this exact amount.')+'</div>'
+        +'<div class="small sub" style="margin-top:4px">A quote estimate for one route at one moment, possibly spanning several liquidity sources. It is not a wallet swap simulation, and the venue will requote when you arrive.</div>';
+    }
+    async function run(){
+      const key=wantKey();
+      if(tick) clearInterval(tick);
+      live=null; out().innerHTML='<span class="sk" style="width:200px"></span>';
+      const v=parseFloat(document.getElementById("amt").value);
+      const q=await quote(addr,v,core.dec);
+      if(q.key&&q.key!==wantKey()) return;            // the input moved on, discard
+      if(q.error){ out().innerHTML='<div class="small warnv">'+esc(q.error)+'</div>'; return; }
+      live=q; paint(); tick=setInterval(paint,1000);
+    }
     document.getElementById("qbtn").onclick=run;
+    document.getElementById("amt").addEventListener("input",()=>{ if(tick) clearInterval(tick); live=null; out().innerHTML='<div class="small sub">Amount changed. Get a new quote.</div>'; });
     document.getElementById("amt").addEventListener("keydown",e=>{ if(e.key==="Enter"){ e.preventDefault(); run(); }});
     run();
   } else tb.innerHTML="";
